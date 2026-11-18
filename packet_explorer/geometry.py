@@ -18,6 +18,7 @@ class Geometry:
         offsets = {}
         address_tables = []
         next_offset = 0
+        self.channels = np.empty(self.size, dtype=np.uint8)
         self.chips = np.empty(self.size, dtype=np.int32)
         for t in self.tiles:
             iog, tile = t["iog"], t["tile"]
@@ -34,6 +35,7 @@ class Geometry:
                 next_offset += addresses.size
                 address_tables.append(addresses)
             t["address_start"] = offsets[layout]
+            self.channels[pixels] = chan
             self.chips[pixels] = ((iog - 1) * 8 + tile - 1) * 256 + chip
 
         self.addresses = b"".join(a.tobytes() for a in address_tables)

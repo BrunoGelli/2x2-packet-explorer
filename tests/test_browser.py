@@ -46,6 +46,25 @@ def check_histogram(page, expect):
     summary = page.locator("#histSummary")
     page.locator("#histogram summary").click()
     expect(summary).to_have_text("4 packets · Mean 12")
+    heat = page.locator("#jointPlot")
+    expect(page.locator("#jointSummary")).to_have_text("4 packets")
+    heat.scroll_into_view_if_needed()
+    rect = heat.bounding_box()
+    # Top right is channel occupancy 2 and local FIFO code 3.
+    page.mouse.move(
+        rect["x"] + 78 + (rect["width"] - 93) * 0.75,
+        rect["y"] + 12 + (rect["height"] - 54) / 8,
+    )
+    tip = page.locator("#tooltip")
+    expect(tip).to_contain_text("Local FIFO · 3")
+    expect(tip).to_contain_text("2 packets")
+    page.locator("#jointX").select_option("adc")
+    page.locator("#jointY").select_option("channel_id")
+    expect(page.locator("#jointSummary")).to_have_text("4 packets")
+    page.locator("#jointEnabled").uncheck()
+    expect(heat).to_be_hidden()
+    page.locator("#jointEnabled").check()
+    expect(heat).to_be_visible()
     page.locator("#histFit").check()
     plot = page.locator("#histPlot")
     plot.scroll_into_view_if_needed()
@@ -79,10 +98,21 @@ def check_histogram(page, expect):
     page.locator("#field").select_option("adc")
     page.locator("#stat").select_option("median")
     expect(summary).to_have_text("1 pixel · Mean 12")
+    expect(page.locator("#jointSummary")).to_have_text("1 pixel")
+    expect(page.locator("#jointY")).to_have_value("map_value")
+    heat.scroll_into_view_if_needed()
+    rect = heat.bounding_box()
+    page.mouse.move(
+        rect["x"] + 78 + (rect["width"] - 93) * 0.75,
+        rect["y"] + 12 + (rect["height"] - 54) * 0.5,
+    )
+    expect(tip).to_contain_text("Median · 12")
+    expect(tip).to_contain_text("1 pixel")
     page.locator("#hold").fill("10")
     page.locator("#hold").press("Tab")
     page.get_by_role("button", name="Step forward", exact=True).click()
     expect(summary).to_have_text("0 pixels in this window")
+    expect(page.locator("#jointSummary")).to_have_text("0 pixels")
     page.locator("#histSamples").select_option("packets")
     expect(summary).to_have_text("0 packets in this window")
     page.get_by_role("button", name="Step backward", exact=True).click()

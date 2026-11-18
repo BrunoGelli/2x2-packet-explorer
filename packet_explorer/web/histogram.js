@@ -1,3 +1,4 @@
+import { Heatmap, pixelPairs } from "./heatmap.js";
 import { fit, showTip } from "./detector.js";
 
 const $ = (id) => document.getElementById(id);
@@ -13,7 +14,9 @@ const fieldNames = {
 const left = 58,
   right = 16;
 
-function pixelHistogram(detector, region) {
+function pixelHistogram(detector, region, axes) {
+  const ids = axes ? [] : null;
+  let maxCount = 0;
   const values = [];
   const boxes = new Map((region.boxes || []).map((box) => [box[0], box]));
   let min = Infinity,
@@ -38,6 +41,10 @@ function pixelHistogram(detector, region) {
     sum += v;
     integers &&= Number.isInteger(v);
     values.push(v);
+    if (ids) {
+      ids.push(id);
+      maxCount = Math.max(maxCount, detector.count[id]);
+    }
   }
   if (!values.length) return { counts: [], total: 0 };
   // Use exact codes when possible. Continuous bins include the maximum in the last bin.
@@ -47,7 +54,7 @@ function pixelHistogram(detector, region) {
   const counts = Array(n).fill(0);
   for (const v of values)
     counts[Math.min(n - 1, Math.floor((v - min) / width))]++;
-  return {
+  const data = {
     counts,
     min,
     width,
@@ -55,6 +62,8 @@ function pixelHistogram(detector, region) {
     total: values.length,
     mean: sum / values.length,
   };
+  if (axes) data.joint = pixelPairs(detector, ids, maxCount, data, axes);
+  return data;
 }
 
 function binLabel(data, i) {
@@ -77,6 +86,7 @@ export class Histogram {
     this.pause = pause;
     this.panel = $("histogram");
     this.canvas = $("histPlot");
+    this.heatmap = new Heatmap(fieldNames, () => this.refresh());
     for (const [value, label] of Object.entries(fieldNames))
       $("histField").add(new Option(label, value));
     this.panel.addEventListener("toggle", () => {
@@ -127,6 +137,7 @@ export class Histogram {
     this.canvas.addEventListener("pointerleave", (e) => showTip(e, ""));
     this.observer = new ResizeObserver(() => this.draw());
     this.observer.observe(this.canvas);
+    this.observer.observe(this.heatmap.canvas);
     this.reset(0);
   }
   reset(iog) {
@@ -201,6 +212,9 @@ export class Histogram {
   async refresh() {
     this.pending?.abort();
     const pixels = $("histSamples").value === "pixels";
+    this.heatmap.setMode($("histSamples").value);
+    const axes = this.heatmap.axes;
+    this.heatmap.set(null, null, pixels ? "pixels" : "packets", "Map value");
     $("histFieldLabel").hidden = $("histFitLabel").hidden = pixels;
     $("drawRegion").disabled = !this.frame;
     this.data = null;
@@ -231,16 +245,17 @@ export class Histogram {
     this.unit = pixels ? "pixels" : "packets";
     $("histTitle").textContent = this.label;
     if (pixels) {
-      this.data = pixelHistogram(this.detector, region);
+      this.data = pixelHistogram(this.detector, region, axes);
     } else {
       const ctrl = new AbortController();
       this.pending = ctrl;
       $("histSummary").textContent = "Counting packets…";
       this.draw();
       try {
-        const { counts } = await this.fetchBins(
+        const { counts, joint } = await this.fetchBins(
           {
             ...this.frame,
+            ...axes,
             iog: region.iog,
             field,
             boxes: region.boxes && JSON.stringify(region.boxes),
@@ -251,6 +266,7 @@ export class Histogram {
         const total = counts.reduce((a, b) => a + b, 0);
         const sum = counts.reduce((s, n, i) => s + n * i, 0);
         this.data = {
+          joint,
           counts,
           total,
           mean: total ? sum / total : 0,
@@ -264,6 +280,7 @@ export class Histogram {
       }
     }
     const data = this.data;
+    this.heatmap.set(data.joint, data.total, this.unit, this.label);
     $("histSummary").textContent = data.total
       ? data.total.toLocaleString() +
         " " +
@@ -275,6 +292,7 @@ export class Histogram {
   }
   draw() {
     if (!this.panel.open || !this.canvas.clientWidth) return;
+    this.heatmap.draw();
     const { ctx, w, h } = fit(this.canvas);
     ctx.clearRect(0, 0, w, h);
     let data = this.data;

@@ -233,6 +233,7 @@ class Handler(BaseHTTPRequestHandler):
                 "detector.js",
                 "timeline.js",
                 "histogram.js",
+                "heatmap.js",
             ):
                 return self.send({"error": "Unknown page."}, status=404)
             return self.send(
@@ -308,7 +309,15 @@ class Handler(BaseHTTPRequestHandler):
             if action == "histogram":
                 boxes = json.loads(q["boxes"]) if "boxes" in q else None
                 return self.send(
-                    view.histogram(lo, hi, q.get("field", "adc"), iog, boxes)
+                    view.histogram(
+                        lo,
+                        hi,
+                        q.get("field", "adc"),
+                        iog,
+                        boxes,
+                        q.get("x"),
+                        q.get("y"),
+                    )
                 )
             if action == "timeline":
                 return self.send(

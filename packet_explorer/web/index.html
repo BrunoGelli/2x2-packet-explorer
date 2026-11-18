@@ -282,10 +282,6 @@
                 <option value="pixels">Active map pixels</option>
               </select></label
             >
-            <label id="histFieldLabel"
-              >Field
-              <select id="histField" aria-label="Histogram field"></select
-            ></label>
             <label
               >Area
               <select id="histArea" aria-label="Histogram area"></select
@@ -294,16 +290,61 @@
               Draw region
             </button>
             <label id="histFitLabel" class="check"
-              ><input id="histFit" type="checkbox" />Fit x-axis to data</label
+              ><input id="histFit" type="checkbox" />Fit axes to data</label
+            >
+            <label class="check"
+              ><input type="checkbox" id="jointEnabled" checked />Show 2D
+              histogram</label
             >
           </div>
-          <div class="hist-caption">
-            <strong id="histTitle"></strong><span id="histSummary"></span>
+          <div id="histPlots" class="paired">
+            <section class="hist-pane" aria-label="One-dimensional histogram">
+              <div class="hist-caption">
+                <strong id="histTitle"></strong><span id="histSummary"></span>
+              </div>
+              <div class="inline-controls hist-axes">
+                <label id="histFieldLabel"
+                  >Field
+                  <select id="histField" aria-label="Histogram field"></select
+                ></label>
+              </div>
+              <canvas
+                id="histPlot"
+                aria-label="Histogram of the current window"
+              ></canvas>
+            </section>
+            <section
+              id="jointPane"
+              class="hist-pane"
+              aria-label="Two-dimensional histogram"
+            >
+              <div class="hist-caption">
+                <strong>2D histogram</strong><span id="jointSummary"></span>
+              </div>
+              <div class="inline-controls hist-axes">
+                <label
+                  >X
+                  <select id="jointX" aria-label="2D histogram X axis"></select
+                ></label>
+                <label
+                  >Y
+                  <select id="jointY" aria-label="2D histogram Y axis"></select
+                ></label>
+              </div>
+              <canvas
+                id="jointPlot"
+                aria-label="Two-dimensional histogram, color shows samples per bin"
+              ></canvas>
+              <div id="jointLegend" hidden>
+                <label
+                  ><input type="checkbox" id="jointLog" checked /> Log
+                  color</label
+                >
+                <span id="jointUnit"></span><span class="joint-low">1</span
+                ><i aria-hidden="true"></i><span id="jointPeak"></span>
+              </div>
+            </section>
           </div>
-          <canvas
-            id="histPlot"
-            aria-label="Histogram of the current window"
-          ></canvas>
         </div>
       </details>
       <details id="inspect" class="panel disclosure">

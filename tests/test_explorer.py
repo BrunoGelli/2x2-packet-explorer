@@ -91,6 +91,55 @@ def test_packet_histogram_regions_and_timing(tmp_path, geom):
         view.histogram(3, 4, "count")
 
 
+def test_joint_histogram_preserves_recorded_pairs(tmp_path, geom):
+    _, view = setup_view(tmp_path, geom)
+    result = view.histogram(3, 4, "adc", x="channel_count", y="local_fifo")
+    joint = result["joint"]
+    # Each of two physical pixels sends two packets, one at status 0 and one at 3.
+    assert joint["x"]["min"] == 1 and joint["x"]["max"] == 2
+    assert dict(zip(joint["bins"], joint["counts"])) == {1: 2, 7: 2}
+    assert sum(joint["counts"]) == sum(result["counts"])
+    region = [[1, 3, 68, 4, 69]]
+    joint = view.histogram(2, 4, "adc", 1, region, "adc", "local_fifo")["joint"]
+    assert dict(zip(joint["bins"], joint["counts"])) == {
+        16: 1,
+        256 + 200: 1,
+        3 * 256 + 8: 1,
+    }
+    assert view.histogram(4, 5, "adc", x="adc", y="local_fifo")["joint"]["counts"] == []
+    with pytest.raises(ValueError):
+        view.histogram(2, 4, "adc", x="adc")
+    with pytest.raises(ValueError):
+        view.histogram(2, 4, "adc", x="foo", y="adc")
+
+
+def test_hot_channel_occupancy_bins_and_electronics(geom):
+    view = object.__new__(View)
+    view.geometry = geom
+    p = geom.lut[1, 1, 11, 0]
+    rows = np.zeros(151, HIT)
+    rows["pixel"] = p
+    rows["local_fifo"] = 3
+    # One occupancy spanning two files, with the same channel ID on a second chip.
+    other = np.flatnonzero((geom.channels == 0) & (geom.chips != geom.chips[p]))[0]
+    rows["pixel"][-1] = other
+    view.runs = {"hits": [Run(0, 1, 0, 0, 1, rows[:70]), Run(1, 1, 0, 0, 1, rows[70:])]}
+    joint = view.histogram(0, 1, "adc", x="channel_count", y="local_fifo")["joint"]
+    assert joint["x"] == {
+        "min": 1,
+        "max": 150,
+        "width": 3,
+        "size": 50,
+        "discrete": True,
+    }
+    assert joint["bins"] == [150, 199] and joint["counts"] == [1, 150]
+    ids = view.histogram(0, 1, "adc", x="channel_id", y="chip_id")["joint"]
+    assert dict(zip(ids["bins"], ids["counts"])) == {
+        11 * 64: 150,
+        int(geom.chips[other] % 256) * 64: 1,
+    }
+
+
 def test_persistence_and_half_open_windows(tmp_path, geom):
     _, v = setup_view(tmp_path, geom)
     assert len(v.map(4, 1, 0, "occupancy", "last", 1)) == 0

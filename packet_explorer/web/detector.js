@@ -342,16 +342,20 @@ export class Detector {
     cam.y = (y - 0.5) * (1 - ratio) + cam.y * ratio;
     cam.zoom = zoom;
   }
+  address(id) {
+    const tile = this.tiles[this.tileOf[id]];
+    return this.addresses.getUint16(
+      2 * (tile.address_start + id - tile.start),
+      true,
+    );
+  }
   readPixel() {
     const h = this.hover;
     const id = h ? this.underPointer(h, this.canvases[h.iog], h.iog) : null;
     let text = "Hover a pixel for its address";
     if (id !== null) {
       const t = this.tiles[this.tileOf[id]];
-      const addr = this.addresses.getUint16(
-        2 * (t.address_start + id - t.start),
-        true,
-      );
+      const addr = this.address(id);
       text =
         "IOG " +
         t.iog +

@@ -16,6 +16,7 @@ FIELD_LEVELS = {
     "first_packet": 2,
     "downstream_marker": 2,
 }
+AXIS_LEVELS = {**FIELD_LEVELS, "channel_id": 64, "chip_id": 256}
 STATS = {"mean", "median", "min", "max", "last", "full_fraction"}
 MAP_RECORD = np.dtype([("pixel", "<u4"), ("count", "<f8"), ("value", "<f8")])
 
@@ -26,6 +27,20 @@ def field_values(records, field):
     if field in ("first_packet", "downstream_marker"):
         return (records["flags"] >> (2 if field == "first_packet" else 3)) & 1
     return records[field]
+
+
+def packet_axis(key, max_count):
+    if key == "channel_count":
+        first, levels, width = 1, max_count, (max_count + 63) // 64
+    else:
+        first, levels, width = 0, AXIS_LEVELS[key], 1
+    return {
+        "min": first,
+        "max": first + levels - 1,
+        "width": width,
+        "size": (levels + width - 1) // width,
+        "discrete": True,
+    }
 
 
 @dataclass
@@ -180,7 +195,7 @@ class View:
             },
         }
 
-    def histogram(self, lo, hi, field, iog=0, boxes=None):
+    def histogram(self, lo, hi, field, iog=0, boxes=None, x=None, y=None):
         """One count per mapped charge packet. Pixel boxes use tile raster coordinates."""
         if field not in FIELD_LEVELS:
             raise ValueError("Unknown packet histogram field.")
@@ -205,13 +220,56 @@ class View:
                     raise ValueError("Histogram region exceeds its tile.")
                 start, w, h = t["start"], t["width"], t["height"]
                 mask[start : start + w * h].reshape(h, w)[y0:y1, x0:x1] = True
+        pair = x is not None or y is not None
+        max_count = 1
+        occupancy = None
+        if pair:
+            valid = AXIS_LEVELS.keys() | {"channel_count"}
+            if x not in valid or y not in valid:
+                raise ValueError("Select two valid packet histogram axes.")
+            if "channel_count" in (x, y):
+                # Counts belong to physical pixels across all included files and runs.
+                occupancy = np.zeros(self.geometry.size, dtype=np.int64)
+                for _, data in self.slices("hits", lo, hi, iog):
+                    np.add.at(occupancy, data["pixel"], 1)
+                selected = occupancy if mask is None else occupancy[mask]
+                max_count = max(1, int(selected.max(initial=0)))
+            axes = [packet_axis(key, max_count) for key in (x, y)]
+            nx = axes[0]["size"]
+            cells = np.zeros(nx * axes[1]["size"], dtype=np.int64)
+
         counts = np.zeros(FIELD_LEVELS[field], dtype=np.int64)
         for _, data in self.slices("hits", lo, hi, iog):
-            values = field_values(data, field)
             if mask is not None:
-                values = values[mask[data["pixel"]]]
+                data = data[mask[data["pixel"]]]
+            values = field_values(data, field)
             counts += np.bincount(values, minlength=len(counts))
-        return {"counts": counts.tolist()}
+            if pair and len(data):
+                codes = []
+                for key, axis in zip((x, y), axes):
+                    if key == "channel_count":
+                        v = (occupancy[data["pixel"]] - 1) // axis["width"]
+                    elif key == "channel_id":
+                        v = self.geometry.channels[data["pixel"]]
+                    elif key == "chip_id":
+                        v = self.geometry.chips[data["pixel"]] % 256
+                    else:
+                        v = values if key == field else field_values(data, key)
+                    codes.append(v)
+                # Promote before multiplying because recorded codes are uint8.
+                cell = codes[1].astype(np.int64) * nx + codes[0]
+                np.add.at(cells, cell, 1)
+
+        result = {"counts": counts.tolist()}
+        if pair:
+            occupied = np.flatnonzero(cells)
+            result["joint"] = {
+                "x": axes[0],
+                "y": axes[1],
+                "bins": occupied.tolist(),
+                "counts": cells[occupied].tolist(),
+            }
+        return result
 
     def map(self, play, width, hold, field, stat, iog=0):
         if (
