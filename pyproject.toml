@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "twobytwo-packet-explorer"
+version = "0.1.0"
+description = "Interactive inspection of 2×2 LArPix packet files in detector time"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "h5py>=3.8"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+packet-explorer = "packet_explorer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["packet_explorer*"]
+
+[tool.setuptools.package-data]
+packet_explorer = ["web/*", "data/*"]

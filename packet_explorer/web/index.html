@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>2×2 Packet Explorer</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="mast">
+      <div class="brand">
+        <span class="brandmark" aria-hidden="true"
+          ><i></i><i></i><i></i><i></i></span
+        ><strong>2×2</strong><span class="slash">/</span> Packet Explorer
+      </div>
+      <button id="files" class="mint-outline">Select files</button>
+    </header>
+    <main>
+      <div id="notice" role="status" hidden></div>
+      <section class="session-head">
+        <div>
+          <h1 id="run">Packet files</h1>
+          <div id="fileSummary" class="subtle">
+            Select a recording to explore.
+          </div>
+        </div>
+        <div class="controls">
+          <label
+            >Clock<select id="scope" disabled>
+              <option>Detector time</option>
+            </select></label
+          ><label
+            >Planes<select id="iog">
+              <option value="0">All IOGs</option>
+            </select></label
+          >
+        </div>
+      </section>
+      <section class="panel transport" aria-label="Playback">
+        <div class="movement">
+          <div class="buttons">
+            <button
+              id="prevHit"
+              title="Previous occupied tick"
+              aria-label="Previous occupied tick"
+            >
+              ⇤</button
+            ><button
+              id="back"
+              title="Step backward (←)"
+              aria-label="Step backward"
+            >
+              ◂</button
+            ><button id="play" class="play" aria-label="Play">▶</button
+            ><button
+              id="forward"
+              title="Step forward (→)"
+              aria-label="Step forward"
+            >
+              ▸</button
+            ><button
+              id="nextHit"
+              title="Next occupied tick"
+              aria-label="Next occupied tick"
+            >
+              ⇥
+            </button>
+          </div>
+          <div class="readout">
+            <label for="tick">Playhead · tick</label
+            ><input
+              id="tick"
+              type="text"
+              inputmode="numeric"
+              value="0"
+              title="Enter a session-relative detector tick and press Enter"
+            /><small id="clock">—</small>
+          </div>
+        </div>
+        <div class="controls timing">
+          <button id="single" title="Set window and step to one ASIC cycle">
+            Single tick</button
+          ><label
+            >Window<span class="duration"
+              ><input
+                id="width"
+                type="number"
+                min="1"
+                value="1"
+                aria-label="Window value" /><select
+                id="widthUnit"
+                aria-label="Window unit"
+              ></select></span></label
+          ><label
+            >Step<span class="duration"
+              ><input
+                id="step"
+                type="number"
+                min="1"
+                value="1"
+                aria-label="Step value" /><select
+                id="stepUnit"
+                aria-label="Step unit"
+              ></select></span></label
+          ><label
+            >Hold<span class="duration"
+              ><input
+                id="hold"
+                type="number"
+                min="0"
+                value="0"
+                aria-label="Hold value" /><select
+                id="holdUnit"
+                aria-label="Hold unit"
+              ></select></span></label
+          ><label
+            >Playback<select id="speed">
+              <option value="step:5">5 steps/s</option>
+              <option value="step:1">1 step/s</option>
+              <option value="step:15">15 steps/s</option>
+              <option value="time:0.1">0.1× real time</option>
+              <option value="time:1">1× real time</option>
+              <option value="time:10">10× real time</option>
+              <option value="time:60">60× real time</option>
+            </select></label
+          >
+        </div>
+      </section>
+      <section class="panel marker-panel">
+        <div class="panel-head">
+          <div class="section-title">
+            <i class="dot amber"></i>
+            <h2>Markers</h2>
+          </div>
+          <span id="markerNote" class="subtle"
+            >Click to seek · drag to zoom</span
+          >
+        </div>
+        <canvas
+          id="markers"
+          aria-label="SYNC and trigger marker timelines"
+        ></canvas>
+      </section>
+      <section class="panel map-panel">
+        <div class="panel-head">
+          <div class="section-title">
+            <i class="dot"></i>
+            <h2>Anode planes</h2>
+          </div>
+          <div class="inline-controls">
+            <label
+              >Field<select id="field">
+                <option value="occupancy">Occupancy</option>
+                <option value="count">Packet count</option>
+                <option value="rate">Pixel rate</option>
+                <option value="first_hit">First-hit time</option>
+                <option value="adc">ADC · dataword</option>
+                <option value="local_fifo">Local FIFO</option>
+                <option value="shared_fifo">Shared FIFO</option>
+                <option value="trigger_type">Trigger type</option>
+                <option value="first_packet">First-packet flag</option>
+                <option value="downstream_marker">Downstream flag</option>
+              </select></label
+            ><label>Statistic<select id="stat"></select></label>
+          </div>
+        </div>
+        <div id="modules"></div>
+        <div class="map-footer">
+          <span id="mapSummary">—</span>
+          <div id="legend"></div>
+        </div>
+      </section>
+      <section class="panel rate-panel">
+        <div class="panel-head">
+          <div class="section-title">
+            <i class="dot blue"></i>
+            <h2>Packet rate</h2>
+          </div>
+          <div class="inline-controls">
+            <label class="check"
+              ><input id="chips" type="checkbox" /> Active chips / bin</label
+            >
+            <div class="buttons small">
+              <button id="peak">Peak rate</button
+              ><button id="zoomin" title="Zoom in around playhead">
+                Zoom in</button
+              ><button id="zoomout">Zoom out</button
+              ><button id="resetZoom">Full span</button>
+            </div>
+          </div>
+        </div>
+        <canvas
+          id="rates"
+          aria-label="Mapped charge packet rate in packets per second"
+        ></canvas>
+        <div class="overview-wrap">
+          <span>Full selection</span
+          ><canvas
+            id="overview"
+            aria-label="Full file selection overview; drag to zoom"
+          ></canvas>
+        </div>
+        <div class="rate-footer">
+          <span id="viewport">—</span
+          ><button class="link" id="useRange">Map visible interval</button>
+        </div>
+      </section>
+      <details id="inspect" class="panel disclosure">
+        <summary>
+          Packet inspector <span id="inspectionLabel">Current window</span>
+        </summary>
+        <div class="ins-content">
+          <div class="ins-bar">
+            <div class="buttons small">
+              <button id="windowMode">Window</button
+              ><button id="rowMode">Source rows</button>
+            </div>
+            <button id="clearPixel" class="link" hidden>Show all pixels</button
+            ><label id="sourceLabel" hidden
+              >File
+              <select id="source"></select></label
+            ><label id="rowLabel" hidden
+              >Start row <input id="rawStart" type="number" min="0" value="0"
+            /></label>
+            <div class="pager">
+              <button id="prevPage">Previous</button><span id="pageInfo">—</span
+              ><button id="nextPage">Next</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead id="thead"></thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+          <pre id="rowDetail" hidden></pre>
+        </div>
+      </details>
+      <details class="panel disclosure" id="diagnostics">
+        <summary>File and timing details <span id="quality"></span></summary>
+        <div id="sources" class="ins-content"></div>
+      </details>
+    </main>
+    <div id="tooltip" hidden></div>
+    <dialog id="picker">
+      <div class="dialog-head">
+        <h2>Select packet files</h2>
+        <button id="closePicker" aria-label="Close file selector">×</button>
+      </div>
+      <div class="browse-path">
+        <button id="up">Up</button><code id="browsePath"></code>
+      </div>
+      <input
+        id="filter"
+        type="search"
+        placeholder="Filter filenames"
+        aria-label="Filter filenames"
+      />
+      <div id="listing"></div>
+      <div class="dialog-foot">
+        <span id="selectedCount">0 selected</span>
+        <div class="buttons">
+          <button id="allVisible">Select filtered files</button
+          ><button id="clearFiles">Clear</button
+          ><button id="openFiles" class="primary">Open selection</button>
+        </div>
+      </div>
+    </dialog>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

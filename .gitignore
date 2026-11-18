@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+dist/
+build/
+*.h5
+*.hdf5
+.packet-cache/
