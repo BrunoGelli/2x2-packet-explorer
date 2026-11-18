@@ -25,6 +25,16 @@ The selector browses the filesystem of the machine running the reader. Checked f
 
 ## Run at NERSC
 
+**From the Jupyter web interface**, open **Launcher → Terminal** in the active NERSC JupyterLab server. Activate the Packet Explorer environment, change into the packet directory, and run:
+
+```bash
+packet-explorer serve --jupyter --root "$PWD"
+```
+
+Open the full HTTPS link printed in that terminal, including the launch key. Jupyter proxies the request back to the automatically selected loopback port on the same node. Leave the command running while exploring. Named servers use their own service prefix. Add `--port 8766` to request a particular port.
+
+### From an SSH session
+
 Start the server in an interactive CPU allocation, in an environment where the package is installed. Point it at the parent of the packet directories you need. Project data can remain on the NERSC filesystem.
 
 ```bash

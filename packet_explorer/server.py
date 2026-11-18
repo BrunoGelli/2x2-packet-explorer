@@ -23,7 +23,10 @@ LOG = logging.getLogger(__name__)
 
 
 class Workspace:
-    def __init__(self, root, cache, initial=()):
+    def __init__(self, root, cache, initial=(), *, nersc_jupyter=False):
+        self.hosts = {"127.0.0.1", "localhost"}
+        if nersc_jupyter:
+            self.hosts.add("jupyter.nersc.gov")
         self.root, self.cache = Path(root).resolve(), Path(cache)
         self.initial = [str(Path(p).resolve().relative_to(self.root)) for p in initial]
         self.access_key = secrets.token_urlsafe(32)
@@ -163,19 +166,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_route(self, post):
         try:
-            if self.headers.get("Sec-Fetch-Site") == "cross-site" or urlsplit(
-                "//" + self.headers.get("Host", "")
-            ).hostname not in ("localhost", "127.0.0.1"):
+            if (
+                self.headers.get("Sec-Fetch-Site") == "cross-site"
+                or urlsplit("//" + self.headers.get("Host", "")).hostname
+                not in self.work.hosts
+            ):
                 return self.send(
-                    {"error": "Use the loopback address or a local SSH forward."},
+                    {
+                        "error": "Use the private launch URL printed in the server terminal."
+                    },
                     status=403,
                 )
             url = urlsplit(self.path)
             q = {k: v[0] for k, v in parse_qs(url.query).items()}
             path = url.path.strip("/")
+            authorization = self.headers.get("Authorization", "")
+            legacy_key = (
+                authorization[7:] if authorization.startswith("Bearer ") else ""
+            )
             if path.startswith("api/") and not secrets.compare_digest(
-                self.headers.get("Authorization", "").encode(),
-                ("Bearer " + self.work.access_key).encode(),
+                self.headers.get("X-Packet-Explorer-Key", legacy_key).encode(),
+                self.work.access_key.encode(),
             ):
                 return self.send(
                     {

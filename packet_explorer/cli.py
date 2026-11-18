@@ -19,7 +19,12 @@ def main():
     serve.add_argument(
         "--root", type=Path, help="Top directory available in the file selector"
     )
-    serve.add_argument("--port", type=int, default=8766)
+    serve.add_argument(
+        "--port", type=int, help="Listening port (automatic in Jupyter, otherwise 8766)"
+    )
+    serve.add_argument(
+        "--jupyter", action="store_true", help="Print a proxied NERSC JupyterLab link"
+    )
     serve.add_argument(
         "--open", action="store_true", help="Open the local browser automatically"
     )
@@ -54,9 +59,21 @@ def main():
         not p.is_file() or not p.is_relative_to(root) for p in files
     ):
         parser.error("The data root must be a directory containing all selected files.")
-    work = Workspace(root, cache, files)
-    server = make_server(work, args.port)
+    prefix = os.environ.get("JUPYTERHUB_SERVICE_PREFIX", "").rstrip("/")
+    if args.jupyter and (
+        not prefix.startswith("/")
+        or prefix.startswith("//")
+        or any(c in prefix for c in "?#")
+    ):
+        parser.error(
+            "Start --jupyter inside the NERSC JupyterLab terminal for your active server."
+        )
+    work = Workspace(root, cache, files, nersc_jupyter=args.jupyter)
+    port = args.port if args.port is not None else (0 if args.jupyter else 8766)
+    server = make_server(work, port)
     url = f"http://127.0.0.1:{server.server_port}/#key={work.access_key}"
+    if args.jupyter:
+        url = f"https://jupyter.nersc.gov{prefix}/proxy/{server.server_port}/#key={work.access_key}"
     print(f"2×2 Packet Explorer   {url}\nData directory   {root}", flush=True)
     if args.open:
         Timer(0.2, webbrowser.open, args=(url,)).start()

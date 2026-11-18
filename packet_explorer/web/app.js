@@ -63,7 +63,7 @@ async function request(name, params = {}, options = {}) {
     if (val !== undefined) url.searchParams.set(key, val);
   const res = await fetch(url, {
     ...options,
-    headers: { ...options.headers, Authorization: "Bearer " + accessKey },
+    headers: { ...options.headers, "X-Packet-Explorer-Key": accessKey },
     cache: "no-store",
   });
   if (!res.ok) {
