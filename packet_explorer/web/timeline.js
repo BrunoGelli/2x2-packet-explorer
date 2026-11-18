@@ -25,14 +25,14 @@ const short = (n) =>
       ? (n / 1e3).toFixed(1) + "k"
       : n.toFixed(0);
 const clamp = (x, min, max) => Math.max(min, Math.min(max, x));
-const tint = (name) =>
+const tint = (name, colors) =>
   name === "SYNC 83"
-    ? "#f3c077"
+    ? colors.amber
     : name.startsWith("SYNC")
-      ? "#a69fe4"
+      ? colors.violet
       : name.includes("IOG 5")
-        ? "#6ddbb9"
-        : "#78aafb";
+        ? colors.mint
+        : colors.blue;
 
 export class Timelines {
   constructor(state, seek, zoom, marker) {
@@ -163,7 +163,7 @@ export class Timelines {
     ctx.clearRect(0, 0, w, h);
     ctx.font = "10px monospace";
     ctx.textAlign = "left";
-    ctx.fillStyle = "#101824";
+    ctx.fillStyle = this.colors.inside;
     ctx.fillRect(left, 0, right - left, h);
     ctx.save();
     ctx.beginPath();
@@ -171,7 +171,7 @@ export class Timelines {
     ctx.clip();
     for (const [a, b] of this.s.view.gaps) {
       if (a < hi && b > lo) {
-        ctx.fillStyle = "#554634";
+        ctx.fillStyle = this.colors.gap;
         ctx.fillRect(xpos(a), 0, Math.max(1, xpos(b) - xpos(a)), h);
       }
     }
@@ -179,7 +179,7 @@ export class Timelines {
     for (const v of this.s.view.coverage) {
       files.set(v.file, Math.min(files.get(v.file) ?? Infinity, v.lo));
     }
-    ctx.strokeStyle = "#536075";
+    ctx.strokeStyle = this.colors.lineStrong;
     ctx.setLineDash([3, 4]);
     for (const a of files.values()) {
       if (a > lo && a < hi) {
@@ -207,7 +207,7 @@ export class Timelines {
     };
     if (c === this.over) {
       stay(s.lo, s.hi, "#70a9dc33");
-      ctx.strokeStyle = "#82a2c3";
+      ctx.strokeStyle = this.colors.blue;
       ctx.strokeRect(xpos(s.lo), 1, xpos(s.hi) - xpos(s.lo), h - 2);
     }
     if (s.hold > s.width)
@@ -218,7 +218,7 @@ export class Timelines {
       );
     stay(Math.max(0, s.t + 1 - s.width), s.t + 1, "#65dfbd33");
     const x = xpos(s.t);
-    ctx.fillStyle = "#a5f4d9";
+    ctx.fillStyle = this.colors.mint;
     ctx.fillRect(x, 0, 1.5, h);
     if (this.drag && this.drag.c === c)
       stay(
@@ -230,6 +230,20 @@ export class Timelines {
   }
   draw() {
     if (!this.s.view) return;
+    const style = getComputedStyle(document.documentElement);
+    const color = (name) => style.getPropertyValue("--" + name).trim();
+    this.colors = {
+      inside: color("inside"),
+      gap: color("gap"),
+      lineStrong: color("line-strong"),
+      blue: color("blue"),
+      mint: color("mint"),
+      muted: color("muted"),
+      line: color("line"),
+      rateFill: color("rate-fill"),
+      amber: color("amber"),
+      violet: color("violet"),
+    };
     const data = this.detail,
       lanes = data ? Object.entries(data.lanes) : [];
     const markH = Math.max(45, lanes.length * 18 + 10);
@@ -238,20 +252,20 @@ export class Timelines {
     const m = this.frame(this.marks);
     this.rects = [];
     if (!lanes.length) {
-      m.ctx.fillStyle = "#a2b1c5";
+      m.ctx.fillStyle = this.colors.muted;
       m.ctx.fillText("No markers in this interval", m.left + 6, 22);
     }
     lanes.forEach(([name, points], row) => {
       const y = 14 + 18 * row,
         ctx = m.ctx;
-      ctx.fillStyle = "#b6c4d4";
+      ctx.fillStyle = this.colors.muted;
       ctx.fillText(name, 12, y + 3);
-      ctx.strokeStyle = "#243347";
+      ctx.strokeStyle = this.colors.line;
       ctx.beginPath();
       ctx.moveTo(m.left, y);
       ctx.lineTo(m.right, y);
       ctx.stroke();
-      ctx.fillStyle = tint(name);
+      ctx.fillStyle = tint(name, this.colors);
       for (const p of points) {
         const x = m.xpos(p[2]);
         if (x < m.left || x > m.right) continue;
@@ -284,9 +298,9 @@ export class Timelines {
     if (!mini) {
       for (const v of [0, 0.5, 1]) {
         const y = bottom - v * (bottom - top);
-        ctx.fillStyle = "#96a7bd";
+        ctx.fillStyle = this.colors.muted;
         ctx.fillText(short(v * max) + " Hz", 12, y + 3);
-        ctx.strokeStyle = "#273547";
+        ctx.strokeStyle = this.colors.line;
         ctx.beginPath();
         ctx.moveTo(left, y);
         ctx.lineTo(right, y);
@@ -306,9 +320,9 @@ export class Timelines {
     });
     ctx.lineTo(xpos(data.edges.at(-1)), bottom);
     ctx.closePath();
-    ctx.fillStyle = "#36598180";
+    ctx.fillStyle = this.colors.rateFill;
     ctx.fill();
-    ctx.strokeStyle = "#86b2f4";
+    ctx.strokeStyle = this.colors.blue;
     ctx.lineWidth = mini ? 1 : 1.25;
     ctx.stroke();
     if (data.chips && !mini) {
@@ -319,15 +333,15 @@ export class Timelines {
           y = bottom - (v / peak) * (bottom - top);
         i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       });
-      ctx.strokeStyle = "#edbd73";
+      ctx.strokeStyle = this.colors.amber;
       ctx.stroke();
       ctx.textAlign = "right";
-      ctx.fillStyle = "#efc786";
+      ctx.fillStyle = this.colors.amber;
       ctx.fillText("chips/bin · max " + peak, right - 5, top + 6);
     }
     ctx.restore();
     if (!mini) {
-      ctx.fillStyle = "#9aadc3";
+      ctx.fillStyle = this.colors.muted;
       for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
         const x = left + frac * (right - left);
         ctx.textAlign = frac === 0 ? "left" : frac === 1 ? "right" : "center";

@@ -15,6 +15,9 @@ class Geometry:
             templates = archive["templates"]
         self.size = sum(t["width"] * t["height"] for t in self.tiles)
         self.lut = np.full((9, 9, 256, 64), -1, dtype=np.int32)
+        offsets = {}
+        address_tables = []
+        next_offset = 0
         self.chips = np.empty(self.size, dtype=np.int32)
         for t in self.tiles:
             iog, tile = t["iog"], t["tile"]
@@ -22,7 +25,18 @@ class Geometry:
             chip, chan = np.nonzero(template >= 0)
             pixels = template[chip, chan].astype(np.int32) + t["start"]
             self.lut[iog, tile, chip, chan] = pixels
+            layout = t["template"]
+            if layout not in offsets:
+                # Many tiles share the same wiring. Send each inverse map once.
+                addresses = np.full(t["width"] * t["height"], 0xFFFF, dtype="<u2")
+                addresses[template[chip, chan]] = (chip << 6) | chan
+                offsets[layout] = next_offset
+                next_offset += addresses.size
+                address_tables.append(addresses)
+            t["address_start"] = offsets[layout]
             self.chips[pixels] = ((iog - 1) * 8 + tile - 1) * 256 + chip
+
+        self.addresses = b"".join(a.tobytes() for a in address_tables)
 
     def lookup(self, iog, data):
         io = data["io_channel"].astype(np.int16)

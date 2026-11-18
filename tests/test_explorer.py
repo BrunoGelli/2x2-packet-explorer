@@ -22,6 +22,16 @@ def setup_view(tmp_path, geom, **kw):
     return f, Session([f], geom).views["aligned"]
 
 
+def test_hover_addresses_round_trip_on_all_anodes(geom):
+    addresses = np.frombuffer(geom.addresses, dtype="<u2")
+    for t in geom.tiles:
+        size = t["width"] * t["height"]
+        start = t["address_start"]
+        addr = addresses[start : start + size]
+        pixels = geom.lut[t["iog"], t["tile"], addr >> 6, addr & 63]
+        np.testing.assert_array_equal(pixels, t["start"] + np.arange(size))
+
+
 def test_timing_rate_rows_and_marker_placement(tmp_path, geom):
     f, v = setup_view(tmp_path, geom)
     assert v.origin == 1794029067 * PERIOD  # beyond JS's exact absolute integer range

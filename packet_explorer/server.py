@@ -217,6 +217,10 @@ class Handler(BaseHTTPRequestHandler):
                         "tiles": self.work.geometry.tiles,
                     }
                 )
+            if path == "api/addresses":
+                return self.send(
+                    self.work.geometry.addresses, "application/octet-stream"
+                )
             if path == "api/catalog":
                 return self.send(self.work.catalog(q.get("dir", ".")))
             if path.startswith("api/"):

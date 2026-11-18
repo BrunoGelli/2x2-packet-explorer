@@ -8,6 +8,40 @@ import pytest
 from packet_explorer.server import Workspace, make_server
 
 
+def check_plane_navigation(page, expect):
+    page.get_by_role("button", name="Expand IOG 1", exact=True).click()
+    expect(page.locator(".plane canvas:visible")).to_have_count(1)
+    expect(page.locator("#iog")).to_have_value("0")
+    canvas = page.get_by_label("IOG 1 detector map")
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    # IOG 1 has a 140 × 280 raster. The fixture's chip 11/channel 0 is
+    # column 3, row 68 of its upper-left tile.
+    pitch = min((box["width"] - 6) / 140, (box["height"] - 6) / 280)
+    x = box["x"] + box["width"] / 2 + (3.5 - 70) * pitch
+    y = box["y"] + box["height"] / 2 + (68.5 - 140) * pitch
+    page.mouse.move(x, y)
+    readout = page.locator("#pixelReadout")
+    expect(readout).to_contain_text("IOG 1 · Tile 1 · Chip 11 · Channel 0")
+    page.mouse.wheel(0, -400)
+    expect(page.locator(".plane:visible .zoom-value")).to_have_text("2.7×")
+    expect(readout).to_contain_text("Chip 11 · Channel 0")
+    page.mouse.down()
+    page.mouse.move(x - 18, y + 8, steps=4)
+    page.mouse.up()
+    expect(readout).to_contain_text("Chip 11 · Channel 0")
+    assert not page.locator("#inspect").evaluate("el => el.open")
+    page.mouse.click(x - 18, y + 8)
+    expect(page.locator("#tbody tr")).to_have_count(2)
+    page.locator("#inspect summary").click()
+    page.locator("#mapFit").click()
+    expect(page.locator(".plane:visible .zoom-value")).to_have_text("")
+    page.locator("#mapFill").click()
+    expect(page.locator(".plane:visible .zoom-value")).not_to_have_text("")
+    page.get_by_role("button", name="Show all planes").click()
+    expect(page.locator(".plane canvas:visible")).to_have_count(8)
+
+
 @pytest.mark.skipif(
     not os.environ.get("PACKET_EXPLORER_BROWSER"),
     reason="Set PACKET_EXPLORER_BROWSER to a Chromium executable.",
@@ -34,16 +68,33 @@ def test_browser_packet_playback(packet_file, tmp_path):
             page.get_by_role("button", name="Step forward", exact=True).click()
             pw.expect(page.locator("#tick")).to_have_value("3")
             pw.expect(page.locator("#mapSummary")).to_contain_text("4 packets")
+            check_plane_navigation(page, pw.expect)
+            page.get_by_label("Theme", exact=True).select_option("dark")
+            pw.expect(page.locator("html")).to_have_attribute("data-theme", "dark")
             page.locator("#iog").select_option("1")
             page.locator("#field").select_option("adc")
             page.locator("#stat").select_option("median")
             pw.expect(page.locator("#mapSummary")).to_contain_text("2 packets")
+            legend = page.locator("#legend")
+            pw.expect(legend).to_contain_text("255 ADC")
+            page.locator("#scale").select_option("window")
+            pw.expect(legend).to_have_text("12 ADC")
+            page.locator("#scale").select_option("custom")
+            page.locator("#scaleMin").fill("9")
+            page.locator("#scaleMax").fill("13")
+            pw.expect(legend).to_contain_text("13 ADC")
+            page.locator("#scaleMax").fill("8")
+            assert not page.locator("#scaleMax").evaluate("el => el.validity.valid")
+            pw.expect(legend).to_contain_text("13 ADC")
+            page.locator("#scaleMax").fill("13")
+            page.locator("#scale").select_option("window")
             page.locator("#hold").fill("100")
             page.locator("#hold").press("Tab")
             page.get_by_role("button", name="Step forward", exact=True).click()
             pw.expect(page.locator("#mapSummary")).to_have_text(
                 "0 packets · 0 active pixels · 1 held"
             )
+            pw.expect(legend).to_contain_text("No active values")
             page.get_by_role("button", name="Step backward", exact=True).click()
             pw.expect(page.locator("#tick")).to_have_value("3")
             page.locator("#inspect summary").click()
@@ -54,6 +105,9 @@ def test_browser_packet_playback(packet_file, tmp_path):
             page.locator("#rawStart").fill("4")
             page.locator("#rawStart").press("Tab")
             pw.expect(page.locator("#tbody tr td").first).to_have_text("4")
+            page.reload()
+            pw.expect(page.locator("#theme")).to_have_value("dark")
+            pw.expect(page.locator("html")).to_have_attribute("data-theme", "dark")
             assert not errors
             browser.close()
     finally:

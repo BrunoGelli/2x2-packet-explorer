@@ -17,8 +17,20 @@ const palette = Array.from({ length: 256 }, (_, i) => {
     Math.round(v + (stops[k + 1][j] - v) * (f - k)),
   );
 });
-const occupied = [101, 223, 189],
-  held = [101, 120, 145];
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const format = (n) =>
+  n.toLocaleString(undefined, { maximumSignificantDigits: 6 });
+const fixedMax = {
+  adc: 255,
+  local_fifo: 3,
+  shared_fifo: 3,
+  trigger_type: 3,
+  first_packet: 1,
+  downstream_marker: 1,
+};
+const units = { first_hit: " ticks", rate: " Hz", adc: " ADC" };
+const resetCamera = () => ({ zoom: 1, x: 0, y: 0 });
+
 export function showTip(e, text) {
   const tip = $("tooltip");
   if (!text) {
@@ -53,7 +65,13 @@ export function fit(canvas) {
 }
 
 export class Detector {
-  constructor(tiles, selectPixel, focus) {
+  constructor(tiles, addresses, selectPixel) {
+    this.addresses = addresses;
+    this.cameras = [];
+    this.field = "occupancy";
+    this.scaleByField = new Map();
+    this.hover = null;
+    this.focused = this.filtered = 0;
     this.tiles = tiles.map((t) => {
       const raster = el("canvas");
       raster.width = t.width;
@@ -75,6 +93,7 @@ export class Detector {
     this.canvases = [];
     this.modules = [];
     this.panes = [];
+    this.layouts = [];
     this.tiles.forEach((t, k) =>
       this.tileOf.fill(k, t.start, t.start + t.width * t.height),
     );
@@ -89,56 +108,212 @@ export class Detector {
           pane = el("div", "plane"),
           canvas = el("canvas");
         canvas.setAttribute("aria-label", "IOG " + iog + " detector map");
-        pane.append(el("div", "plane-title", "IOG " + iog), canvas);
+        const expand = el("button", "plane-title", "IOG " + iog);
+        expand.type = "button";
+        expand.append(el("span", "zoom-value", ""));
+        expand.title = "Expand IOG " + iog;
+        expand.setAttribute("aria-label", "Expand IOG " + iog);
+        expand.setAttribute("aria-pressed", "false");
+        expand.addEventListener("click", () => this.expand(iog));
+        pane.append(expand, canvas);
         planes.append(pane);
         this.canvases[iog] = canvas;
         this.panes[iog] = pane;
-        canvas.addEventListener("pointermove", (e) => {
-          const id = this.underPointer(e, canvas, iog);
-          if (id === null) {
-            showTip(e, "");
-            return;
-          }
-          const t = this.tiles[this.tileOf[id]],
-            cell = id - t.start;
-          let s =
-            "IOG " +
-            iog +
-            " · tile " +
-            t.tile +
-            " · col " +
-            (cell % t.width) +
-            " · row " +
-            (t.height - 1 - Math.floor(cell / t.width));
-          if (this.active[id])
-            s += this.count[id]
-              ? "\n" +
-                this.count[id] +
-                " packet(s) · " +
-                this.value[id].toLocaleString(undefined, {
-                  maximumFractionDigits: 3,
-                })
-              : "\nHeld from an earlier tick";
-          showTip(e, s);
-        });
-        canvas.addEventListener("pointerleave", (e) => showTip(e, ""));
-        canvas.addEventListener("click", (e) => {
-          const id = this.underPointer(e, canvas, iog);
-          if (id !== null) selectPixel(id);
-        });
-        canvas.addEventListener("dblclick", () => focus(iog));
+        const group = this.tiles.filter((t) => t.iog === iog);
+        this.layouts[iog] = {
+          tiles: group,
+          xmin: Math.min(...group.map((t) => t.x - t.pitch / 2)),
+          xmax: Math.max(...group.map((t) => t.x + (t.width - 0.5) * t.pitch)),
+          ymin: Math.min(...group.map((t) => t.y - t.pitch / 2)),
+          ymax: Math.max(...group.map((t) => t.y + (t.height - 0.5) * t.pitch)),
+        };
+        this.cameras[iog] = resetCamera();
+        this.bindPlane(canvas, iog, selectPixel);
       }
+    }
+    for (const [id, factor] of [
+      ["mapIn", 1.5],
+      ["mapOut", 1 / 1.5],
+      ["mapFit", 0],
+    ]) {
+      $(id).addEventListener("click", () => {
+        this.canvases.forEach((c, iog) => {
+          if (c.clientWidth) this.zoomAt(iog, factor, 0.5, 0.5);
+        });
+        this.paint();
+      });
+    }
+    $("mapFill").addEventListener("click", () => {
+      const iog = this.filtered || this.focused;
+      if (!iog) return;
+      const r = this.canvases[iog].getBoundingClientRect();
+      const { xmin, xmax, ymin, ymax } = this.layouts[iog];
+      const sx = (r.width - 6) / (xmax - xmin);
+      const sy = (r.height - 6) / (ymax - ymin);
+      this.cameras[iog] = resetCamera();
+      this.zoomAt(iog, Math.max(sx, sy) / Math.min(sx, sy), 0.5, 0.5);
+      this.paint();
+    });
+    $("scale").addEventListener("change", () => {
+      const state = this.scaleState();
+      const [lo, hi] = this.range();
+      state.mode = $("scale").value;
+      if (state.mode === "custom" && !state.range) {
+        state.range = [lo, hi > lo ? hi : lo + 1];
+      }
+      this.syncScaleControls();
+      this.recolor();
+    });
+    for (const id of ["scaleMin", "scaleMax"]) {
+      $(id).addEventListener("input", () => {
+        const lo = $("scaleMin").valueAsNumber,
+          hi = $("scaleMax").valueAsNumber;
+        const valid = Number.isFinite(lo) && Number.isFinite(hi) && lo < hi;
+        $("scaleMax").setCustomValidity(
+          valid ? "" : "Maximum must be greater than minimum.",
+        );
+        if (valid) {
+          this.scaleState().range = [lo, hi];
+          this.recolor();
+        }
+      });
+      $(id).addEventListener("change", () => {
+        if (!$("scaleMin").reportValidity()) return;
+        $("scaleMax").reportValidity();
+      });
     }
     this.observer = new ResizeObserver(() => this.paint());
     this.canvases.forEach((c) => this.observer.observe(c));
+  }
+  bindPlane(canvas, iog, selectPixel) {
+    let drag = null,
+      moved = false,
+      clickTimer;
+    const position = (e) => {
+      const r = canvas.getBoundingClientRect();
+      return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+    };
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        const delta =
+          e.deltaY *
+          (e.deltaMode === 1
+            ? 16
+            : e.deltaMode === 2
+              ? canvas.clientHeight
+              : 1);
+        this.zoomAt(
+          iog,
+          Math.exp(-clamp(delta, -400, 400) * 0.0025),
+          ...position(e),
+        );
+        this.hover = { iog, clientX: e.clientX, clientY: e.clientY };
+        this.paint();
+      },
+      { passive: false },
+    );
+    canvas.addEventListener("pointerdown", (e) => {
+      if (!e.isPrimary || e.button !== 0) return;
+      moved = false;
+      drag = { x: e.clientX, y: e.clientY, camera: { ...this.cameras[iog] } };
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!e.isPrimary) return;
+      this.hover = { iog, clientX: e.clientX, clientY: e.clientY };
+      if (drag) {
+        const dx = e.clientX - drag.x,
+          dy = e.clientY - drag.y;
+        moved ||= Math.hypot(dx, dy) > 4;
+        if (moved) {
+          this.cameras[iog].x = drag.camera.x + dx / canvas.clientWidth;
+          this.cameras[iog].y = drag.camera.y + dy / canvas.clientHeight;
+          canvas.classList.add("panning");
+          this.paint();
+          return;
+        }
+      }
+      this.readPixel();
+    });
+    const end = () => {
+      drag = null;
+      canvas.classList.remove("panning");
+    };
+    canvas.addEventListener("lostpointercapture", end);
+    canvas.addEventListener("pointercancel", () => {
+      moved = true;
+      end();
+    });
+    canvas.addEventListener("pointerleave", () => {
+      this.hover = null;
+      this.readPixel();
+    });
+    canvas.addEventListener("click", (e) => {
+      clearTimeout(clickTimer);
+      if (moved || e.detail > 1) return;
+      const id = this.underPointer(e, canvas, iog);
+      if (id !== null) clickTimer = setTimeout(() => selectPixel(id), 300);
+    });
+    canvas.addEventListener("dblclick", () => {
+      clearTimeout(clickTimer);
+      this.expand(iog);
+    });
+  }
+  zoomAt(iog, factor, x, y) {
+    const cam = this.cameras[iog];
+    const zoom = clamp(cam.zoom * factor, 1, 32);
+    this.panes[iog].querySelector(".zoom-value").textContent =
+      zoom === 1 ? "" : zoom.toFixed(1).replace(/\.0$/, "") + "×";
+    if (zoom === 1) {
+      this.cameras[iog] = resetCamera();
+      return;
+    }
+    const ratio = zoom / cam.zoom;
+    cam.x = (x - 0.5) * (1 - ratio) + cam.x * ratio;
+    cam.y = (y - 0.5) * (1 - ratio) + cam.y * ratio;
+    cam.zoom = zoom;
+  }
+  readPixel() {
+    const h = this.hover;
+    const id = h ? this.underPointer(h, this.canvases[h.iog], h.iog) : null;
+    let text = "Hover a pixel for its address";
+    if (id !== null) {
+      const t = this.tiles[this.tileOf[id]];
+      const addr = this.addresses.getUint16(
+        2 * (t.address_start + id - t.start),
+        true,
+      );
+      text =
+        "IOG " +
+        t.iog +
+        " · Tile " +
+        t.tile +
+        (addr === 65535
+          ? " · Unmapped pixel"
+          : " · Chip " + (addr >> 6) + " · Channel " + (addr & 63));
+      if (this.active[id]) {
+        if (!this.count[id]) text += "  |  Held";
+        else {
+          text +=
+            "  |  " +
+            format(this.count[id]) +
+            (this.count[id] === 1 ? " packet" : " packets");
+          if (!["occupancy", "count"].includes(this.field))
+            text += " · " + format(this.value[id]) + (units[this.field] || "");
+        }
+      }
+    }
+    if ($("pixelReadout").textContent !== text)
+      $("pixelReadout").textContent = text;
   }
   underPointer(e, canvas, iog) {
     const rect = canvas.getBoundingClientRect(),
       x = e.clientX - rect.left,
       y = e.clientY - rect.top;
-    const t = this.tiles.find(
+    const t = this.layouts[iog].tiles.find(
       (t) =>
-        t.iog === iog &&
         t.rect &&
         x >= t.rect.x &&
         x < t.rect.x + t.rect.w &&
@@ -153,11 +328,36 @@ export class Detector {
     );
   }
   filter(iog) {
+    this.filtered = iog;
+    this.focused = 0;
+    this.layout();
+  }
+  expand(iog) {
+    if (this.filtered) return;
+    this.focused = this.focused === iog ? 0 : iog;
+    this.layout();
+  }
+  layout() {
+    const iog = this.filtered || this.focused;
+    this.hover = null;
+    this.panes.forEach((p, i) => {
+      const button = p.querySelector("button");
+      button.disabled = !!this.filtered;
+      button.setAttribute("aria-pressed", String(i === this.focused));
+      button.setAttribute(
+        "aria-label",
+        i === this.focused ? "Show all planes" : "Expand IOG " + i,
+      );
+      button.title = this.filtered
+        ? "Plane selected in the Planes filter"
+        : button.getAttribute("aria-label");
+    });
     this.modules.forEach(
       (m, i) => (m.hidden = !!iog && Math.floor((iog - 1) / 2) !== i),
     );
     this.panes.forEach((p, i) => (p.hidden = !!iog && iog !== i));
     $("modules").classList.toggle("focus", !!iog);
+    $("mapFill").hidden = !iog;
     this.paint();
   }
   set(buffer, field, stat, heldTicks, width) {
@@ -173,7 +373,8 @@ export class Detector {
     this.ids = new Uint32Array(n);
     let nPacket = 0,
       nCurrent = 0,
-      peak = 0;
+      peak = -Infinity,
+      low = Infinity;
     for (let i = 0; i < n; i++) {
       const at = i * 20,
         id = data.getUint32(at, true),
@@ -187,18 +388,62 @@ export class Detector {
         nPacket += c;
         nCurrent++;
         peak = Math.max(peak, v);
+        low = Math.min(low, v);
       }
     }
-    const fixed = {
-      adc: 255,
-      local_fifo: 3,
-      shared_fifo: 3,
-      trigger_type: 3,
-      first_packet: 1,
-      downstream_marker: 1,
-      occupancy: 1,
-    };
-    const max = stat === "full_fraction" ? 1 : (fixed[field] ?? peak);
+    const previous = this.scaleKey();
+    this.field = field;
+    this.stat = stat;
+    this.showHeld = heldTicks > width;
+    this.extent = nCurrent ? [low, peak] : null;
+    $("mapSummary").textContent =
+      nPacket.toLocaleString() +
+      " packets · " +
+      nCurrent.toLocaleString() +
+      " active pixels" +
+      (heldTicks > width
+        ? " · " + (n - nCurrent).toLocaleString() + " held"
+        : "");
+    if (previous !== this.scaleKey()) this.syncScaleControls();
+    this.recolor();
+  }
+  scaleKey() {
+    return this.field + (this.stat === "full_fraction" ? ":fraction" : "");
+  }
+  scaleState() {
+    const key = this.scaleKey();
+    if (!this.scaleByField.has(key))
+      this.scaleByField.set(key, { mode: "full", range: null });
+    return this.scaleByField.get(key);
+  }
+  syncScaleControls() {
+    const state = this.scaleState();
+    $("scaleTools").hidden = this.field === "occupancy";
+    $("scale").value = state.mode;
+    $("limits").hidden = state.mode !== "custom";
+    $("scaleMax").setCustomValidity("");
+    if (state.range) {
+      $("scaleMin").value = state.range[0];
+      $("scaleMax").value = state.range[1];
+    }
+  }
+  range() {
+    const { mode, range } = this.scaleState();
+    if (mode === "custom" && range) return range;
+    if (mode === "window" && this.extent) return this.extent;
+    return [
+      0,
+      this.stat === "full_fraction"
+        ? 1
+        : (fixedMax[this.field] ?? this.extent?.[1] ?? 1),
+    ];
+  }
+  recolor() {
+    const field = this.field,
+      [min, max] = this.range();
+    const light = document.documentElement.dataset.theme === "light";
+    const occupied = light ? [0, 108, 123] : [86, 210, 202];
+    const held = light ? [119, 131, 151] : [109, 125, 148];
     for (const id of this.ids) {
       const t = this.tiles[this.tileOf[id]],
         k = (id - t.start) * 4;
@@ -206,7 +451,13 @@ export class Detector {
         ? held
         : field === "occupancy"
           ? occupied
-          : palette[Math.round(255 * Math.min(1, this.value[id] / (max || 1)))];
+          : palette[
+              max === min
+                ? 128
+                : Math.round(
+                    255 * clamp((this.value[id] - min) / (max - min), 0, 1),
+                  )
+            ];
       const a = t.image.data;
       a[k] = rgb[0];
       a[k + 1] = rgb[1];
@@ -220,59 +471,64 @@ export class Detector {
         t.dirty = false;
       }
     });
-    $("mapSummary").textContent =
-      nPacket.toLocaleString() +
-      " packets · " +
-      nCurrent.toLocaleString() +
-      " active pixels" +
-      (heldTicks > width
-        ? " · " + (n - nCurrent).toLocaleString() + " held"
-        : "");
     const legend = $("legend");
     legend.replaceChildren();
     if (field === "occupancy")
       legend.append(el("i", "dot"), document.createTextNode("In window"));
-    else
+    else if (this.scaleState().mode === "window" && !this.extent)
+      legend.append("No active values");
+    else if (max === min) {
+      const swatch = el("i", "dot");
+      swatch.style.background = "rgb(" + palette[128] + ")";
+      legend.append(swatch, format(min) + (units[field] || ""));
+    } else
       legend.append(
-        document.createTextNode("0"),
+        document.createTextNode(format(min)),
         el("i", "ramp"),
-        document.createTextNode(
-          max.toLocaleString(undefined, { maximumFractionDigits: 2 }) +
-            (field === "first_hit" ? " ticks" : field === "rate" ? " Hz" : ""),
-        ),
+        document.createTextNode(format(max) + (units[field] || "")),
       );
-    if (heldTicks > width)
+    if (this.showHeld)
       legend.append(el("i", "held"), document.createTextNode("Held"));
     this.paint();
   }
   paint() {
+    const style = getComputedStyle(document.documentElement);
+    const tileColor = style.getPropertyValue("--tile"),
+      lineColor = style.getPropertyValue("--tile-line"),
+      labelColor = style.getPropertyValue("--muted");
     this.canvases.forEach((c, g) => {
       if (!c.clientWidth) return;
-      const { ctx, w, h } = fit(c),
-        tiles = this.tiles.filter((t) => t.iog === g);
-      const xmin = Math.min(...tiles.map((t) => t.x - t.pitch / 2)),
-        xmax = Math.max(...tiles.map((t) => t.x + (t.width - 0.5) * t.pitch));
-      const ymin = Math.min(...tiles.map((t) => t.y - t.pitch / 2)),
-        ymax = Math.max(...tiles.map((t) => t.y + (t.height - 0.5) * t.pitch));
-      const s = Math.min((w - 8) / (xmax - xmin), (h - 6) / (ymax - ymin));
+      const { ctx, w, h } = fit(c);
+      const { tiles, xmin, xmax, ymin, ymax } = this.layouts[g];
+      const cam = this.cameras[g];
+      const s =
+        Math.min((w - 6) / (xmax - xmin), (h - 6) / (ymax - ymin)) * cam.zoom;
+      const limitX = ((xmax - xmin) * s * (1 - 1 / cam.zoom)) / (2 * w);
+      const limitY = ((ymax - ymin) * s * (1 - 1 / cam.zoom)) / (2 * h);
+      cam.x = clamp(cam.x, -limitX, limitX);
+      cam.y = clamp(cam.y, -limitY, limitY);
       ctx.clearRect(0, 0, w, h);
       ctx.imageSmoothingEnabled = false;
       for (const t of tiles) {
-        const x = (w - (xmax - xmin) * s) / 2 + (t.x - t.pitch / 2 - xmin) * s,
+        const x =
+            cam.x * w +
+            (w - (xmax - xmin) * s) / 2 +
+            (t.x - t.pitch / 2 - xmin) * s,
           y =
+            cam.y * h +
             (h - (ymax - ymin) * s) / 2 +
             (ymax - t.y - (t.height - 0.5) * t.pitch) * s;
         const tw = t.width * t.pitch * s,
           th = t.height * t.pitch * s;
         t.rect = { x, y, w: tw, h: th };
-        ctx.fillStyle = "#0a131f";
+        ctx.fillStyle = tileColor;
         ctx.fillRect(x, y, tw, th);
         ctx.drawImage(t.raster, x, y, tw, th);
-        ctx.strokeStyle = "#2c4054";
+        ctx.strokeStyle = lineColor;
         ctx.lineWidth = 0.75;
         ctx.strokeRect(x, y, tw, th);
         if (tw > 22) {
-          ctx.fillStyle = "#738397";
+          ctx.fillStyle = labelColor;
           ctx.font = "9px monospace";
           ctx.fillText("T" + t.tile, x + 3, y + 10);
         }
@@ -298,5 +554,6 @@ export class Detector {
         );
       }
     }
+    this.readPixel();
   }
 }

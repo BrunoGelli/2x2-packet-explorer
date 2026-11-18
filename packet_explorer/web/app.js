@@ -686,20 +686,39 @@ function bind(id, ev, fn) {
   });
 }
 async function main() {
-  const init = await request("bootstrap");
+  const theme = $("theme");
+  const preference = matchMedia("(prefers-color-scheme: dark)");
+  try {
+    theme.value = localStorage.getItem("packet-explorer-theme") || "system";
+  } catch {}
+  function applyTheme() {
+    const dark =
+      theme.value === "dark" || (theme.value !== "light" && preference.matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    detector?.recolor();
+    timelines?.draw();
+  }
+  applyTheme();
+  preference.addEventListener("change", applyTheme);
+  bind("theme", "change", () => {
+    applyTheme();
+    try {
+      localStorage.setItem("packet-explorer-theme", theme.value);
+    } catch {}
+  });
+  const [init, addresses] = await Promise.all([
+    request("bootstrap"),
+    request("addresses"),
+  ]);
   root = init.root;
-  detector = new Detector(
-    init.tiles,
-    (id) => {
-      pause();
-      s.pixel = id;
-      s.raw = false;
-      s.offset = 0;
-      $("inspect").open = true;
-      inspect().catch(report);
-    },
-    (g) => filterIOG(s.iog === g ? 0 : g),
-  );
+  detector = new Detector(init.tiles, new DataView(addresses), (id) => {
+    pause();
+    s.pixel = id;
+    s.raw = false;
+    s.offset = 0;
+    $("inspect").open = true;
+    inspect().catch(report);
+  });
   timelines = new Timelines(s, userSeek, zoom, pickMarker);
   for (const key of ["width", "step", "hold"]) {
     const u = $(key + "Unit");

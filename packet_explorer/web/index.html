@@ -13,7 +13,17 @@
           ><i></i><i></i><i></i><i></i></span
         ><strong>2×2</strong><span class="slash">/</span> Packet Explorer
       </div>
-      <button id="files" class="mint-outline">Select files</button>
+      <div class="mast-actions">
+        <label class="theme-label"
+          >Theme
+          <select id="theme" aria-label="Theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select></label
+        >
+        <button id="files" class="primary">Select files</button>
+      </div>
     </header>
     <main>
       <div id="notice" role="status" hidden></div>
@@ -164,8 +174,60 @@
             ><label>Statistic<select id="stat"></select></label>
           </div>
         </div>
+        <div class="map-tools">
+          <div class="inline-controls scale-tools" id="scaleTools" hidden>
+            <label
+              >Color scale
+              <select id="scale">
+                <option value="full">Full range</option>
+                <option value="window">Window range</option>
+                <option value="custom">Custom range</option>
+              </select></label
+            >
+            <div id="limits" hidden>
+              <label
+                >Min
+                <input id="scaleMin" type="number" step="any" required /></label
+              ><label
+                >Max <input id="scaleMax" type="number" step="any" required
+              /></label>
+            </div>
+          </div>
+          <div class="map-navigation">
+            <div class="zoom-controls" role="group" aria-label="Spatial zoom">
+              <button
+                id="mapOut"
+                title="Zoom out on visible planes"
+                aria-label="Zoom out on visible planes"
+              >
+                −
+              </button>
+              <button id="mapFit" title="Fit visible planes">Fit</button>
+              <button
+                id="mapFill"
+                title="Fill this view and pan to reach the edges"
+                hidden
+              >
+                Fill
+              </button>
+              <button
+                id="mapIn"
+                title="Zoom in on visible planes"
+                aria-label="Zoom in on visible planes"
+              >
+                +
+              </button>
+            </div>
+            <span class="map-hint"
+              >Scroll to zoom · drag to pan · click to inspect</span
+            >
+          </div>
+        </div>
         <div id="modules"></div>
         <div class="map-footer">
+          <div id="pixelReadout" aria-label="Pixel address">
+            Hover a pixel for its address
+          </div>
           <span id="mapSummary">—</span>
           <div id="legend"></div>
         </div>
