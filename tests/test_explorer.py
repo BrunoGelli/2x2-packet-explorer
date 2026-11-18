@@ -75,6 +75,22 @@ def test_single_tick_fields(tmp_path, geom, field, stat, expected):
     )
 
 
+def test_packet_histogram_regions_and_timing(tmp_path, geom):
+    _, view = setup_view(tmp_path, geom)
+    counts = view.histogram(3, 4, "adc")["counts"]
+    assert len(counts) == 256 and sum(counts) == 4 and counts[8] == counts[16] == 2
+    inside = [[1, 3, 68, 4, 69]]
+    assert view.histogram(3, 4, "local_fifo", 1, inside)["counts"] == [1, 0, 0, 1]
+    assert sum(view.histogram(3, 4, "adc", 1, [[1, 0, 0, 3, 69]])["counts"]) == 0
+    # A shared cell in two ranges counts each packet once.
+    assert sum(view.histogram(2, 4, "adc", 1, inside * 2)["counts"]) == 3
+    assert sum(view.histogram(4, 5, "adc")["counts"]) == 0
+    with pytest.raises(ValueError):
+        view.histogram(3, 4, "adc", 1, [[1, 0, 0, 71, 70]])
+    with pytest.raises(ValueError):
+        view.histogram(3, 4, "count")
+
+
 def test_persistence_and_half_open_windows(tmp_path, geom):
     _, v = setup_view(tmp_path, geom)
     assert len(v.map(4, 1, 0, "occupancy", "last", 1)) == 0

@@ -71,6 +71,7 @@ export class Detector {
     this.field = "occupancy";
     this.scaleByField = new Map();
     this.hover = null;
+    this.region = this.draftRegion = this.onRegion = null;
     this.focused = this.filtered = 0;
     this.tiles = tiles.map((t) => {
       const raster = el("canvas");
@@ -197,6 +198,7 @@ export class Detector {
       "wheel",
       (e) => {
         e.preventDefault();
+        if (this.onRegion) return;
         const delta =
           e.deltaY *
           (e.deltaMode === 1
@@ -217,12 +219,25 @@ export class Detector {
     canvas.addEventListener("pointerdown", (e) => {
       if (!e.isPrimary || e.button !== 0) return;
       moved = false;
-      drag = { x: e.clientX, y: e.clientY, camera: { ...this.cameras[iog] } };
+      drag = {
+        x: e.clientX,
+        y: e.clientY,
+        camera: { ...this.cameras[iog] },
+        selecting: !!this.onRegion,
+      };
+      if (drag.selecting) this.draftRegion = null;
       canvas.setPointerCapture(e.pointerId);
     });
     canvas.addEventListener("pointermove", (e) => {
       if (!e.isPrimary) return;
       this.hover = { iog, clientX: e.clientX, clientY: e.clientY };
+      if (drag?.selecting) {
+        if (this.onRegion) {
+          this.draftRegion = this.pixelRegion(iog, drag, e);
+          this.paint();
+        }
+        return;
+      }
       if (drag) {
         const dx = e.clientX - drag.x,
           dy = e.clientY - drag.y;
@@ -241,7 +256,23 @@ export class Detector {
       drag = null;
       canvas.classList.remove("panning");
     };
-    canvas.addEventListener("lostpointercapture", end);
+    canvas.addEventListener("pointerup", (e) => {
+      if (!e.isPrimary || !drag?.selecting) return;
+      moved = true;
+      if (this.onRegion) {
+        const region = this.pixelRegion(iog, drag, e);
+        this.draftRegion = null;
+        if (region.boxes.length) this.onRegion(region);
+        else this.paint();
+      }
+    });
+    canvas.addEventListener("lostpointercapture", () => {
+      if (this.draftRegion) {
+        this.draftRegion = null;
+        this.paint();
+      }
+      end();
+    });
     canvas.addEventListener("pointercancel", () => {
       moved = true;
       end();
@@ -258,8 +289,44 @@ export class Detector {
     });
     canvas.addEventListener("dblclick", () => {
       clearTimeout(clickTimer);
-      this.expand(iog);
+      if (!moved && !this.onRegion) this.expand(iog);
     });
+  }
+  pixelRegion(iog, start, end) {
+    const canvas = this.canvases[iog].getBoundingClientRect();
+    const x = (value) => clamp(value - canvas.left, 0, canvas.width);
+    const y = (value) => clamp(value - canvas.top, 0, canvas.height);
+    const boxes = [];
+    for (const t of this.layouts[iog].tiles) {
+      const r = t.rect;
+      if (!r) continue;
+      const col = (px) => ((px - r.x) * t.width) / r.w;
+      const row = (py) => ((py - r.y) * t.height) / r.h;
+      const x0 = Math.max(
+        0,
+        Math.floor(col(x(Math.min(start.x, end.clientX)))),
+      );
+      const x1 = Math.min(
+        t.width,
+        1 + Math.floor(col(x(Math.max(start.x, end.clientX)))),
+      );
+      const y0 = Math.max(
+        0,
+        Math.floor(row(y(Math.min(start.y, end.clientY)))),
+      );
+      const y1 = Math.min(
+        t.height,
+        1 + Math.floor(row(y(Math.max(start.y, end.clientY)))),
+      );
+      if (x0 < x1 && y0 < y1) boxes.push([t.tile, x0, y0, x1, y1]);
+    }
+    return { iog, boxes };
+  }
+  setRegion(region, onRegion = null) {
+    this.region = region;
+    this.onRegion = onRegion;
+    this.draftRegion = null;
+    this.paint();
   }
   zoomAt(iog, factor, x, y) {
     const cam = this.cameras[iog];
@@ -553,6 +620,26 @@ export class Detector {
           1.6,
         );
       }
+    }
+    const region = this.draftRegion || this.region;
+    if (region?.boxes && !this.panes[region.iog].hidden) {
+      const ctx = this.canvases[region.iog].getContext("2d");
+      ctx.save();
+      ctx.strokeStyle = style.getPropertyValue("--mint");
+      ctx.lineWidth = 1.75;
+      ctx.setLineDash([5, 3]);
+      for (const [tile, x0, y0, x1, y1] of region.boxes) {
+        const t = this.layouts[region.iog].tiles.find((t) => t.tile === tile);
+        if (!t.rect) continue;
+        const { x, y, w, h } = t.rect;
+        ctx.strokeRect(
+          x + (w * x0) / t.width,
+          y + (h * y0) / t.height,
+          (w * (x1 - x0)) / t.width,
+          (h * (y1 - y0)) / t.height,
+        );
+      }
+      ctx.restore();
     }
     this.readPixel();
   }

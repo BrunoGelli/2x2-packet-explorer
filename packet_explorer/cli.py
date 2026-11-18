@@ -1,5 +1,6 @@
 import argparse
 import os
+import socket
 import webbrowser
 from pathlib import Path
 from threading import Timer
@@ -74,7 +75,13 @@ def main():
     url = f"http://127.0.0.1:{server.server_port}/#key={work.access_key}"
     if args.jupyter:
         url = f"https://jupyter.nersc.gov{prefix}/proxy/{server.server_port}/#key={work.access_key}"
-    print(f"2×2 Packet Explorer   {url}\nData directory   {root}", flush=True)
+    pid = os.getpid()
+    print(
+        f"2×2 Packet Explorer   {url}\nData directory   {root}\n"
+        f"Server PID       {pid} on {socket.gethostname()}\n"
+        f"Stop server      kill {pid}",
+        flush=True,
+    )
     if args.open:
         Timer(0.2, webbrowser.open, args=(url,)).start()
     try:

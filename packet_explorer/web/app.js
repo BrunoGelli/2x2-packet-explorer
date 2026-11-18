@@ -1,3 +1,4 @@
+import { Histogram } from "./histogram.js";
 import { Detector } from "./detector.js";
 import { Timelines, duration } from "./timeline.js";
 const $ = (id) => document.getElementById(id);
@@ -32,6 +33,7 @@ const s = {
   rawFile: 0,
 };
 let detector,
+  histogram,
   timelines,
   root,
   dir = ".",
@@ -123,6 +125,12 @@ async function map() {
   detector.set(data, s.field, s.stat, s.hold, s.width);
   drawTime();
   timelines.draw();
+  await histogram.setFrame({
+    job: s.job,
+    scope: s.scope,
+    lo: Math.max(0, s.t + 1 - s.width),
+    hi: s.t + 1,
+  });
 }
 async function charts(resetFull = false) {
   if (!s.view) return;
@@ -390,12 +398,14 @@ function scopeFilter() {
   s.iog = local || 0;
   $("iog").value = String(s.iog);
   detector.filter(s.iog);
+  histogram.reset(s.iog);
 }
 async function setView(scope) {
   pause();
   const version = ++viewId;
   s.scope = scope;
   s.view = null;
+  histogram.reset(0);
   s.pixel = null;
   s.offset = 0;
   s.raw = false;
@@ -444,6 +454,7 @@ async function openFiles(paths) {
   ++chartId;
   ++insId;
   s.view = null;
+  histogram.reset(0);
   s.session = null;
   s.raw = false;
   s.pixel = null;
@@ -594,6 +605,7 @@ function filterIOG(g) {
   s.offset = 0;
   $("iog").value = String(g);
   detector.filter(g);
+  histogram.reset(g);
   map().catch(report);
   charts(true).catch(report);
   if ($("inspect").open) inspect().catch(report);
@@ -697,6 +709,7 @@ async function main() {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     detector?.recolor();
     timelines?.draw();
+    histogram?.draw();
   }
   applyTheme();
   preference.addEventListener("change", applyTheme);
@@ -719,6 +732,11 @@ async function main() {
     $("inspect").open = true;
     inspect().catch(report);
   });
+  histogram = new Histogram(
+    detector,
+    (params, signal) => request("histogram", params, { signal }),
+    pause,
+  );
   timelines = new Timelines(s, userSeek, zoom, pickMarker);
   for (const key of ["width", "step", "hold"]) {
     const u = $(key + "Unit");

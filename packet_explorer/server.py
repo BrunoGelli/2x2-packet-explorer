@@ -232,6 +232,7 @@ class Handler(BaseHTTPRequestHandler):
                 "style.css",
                 "detector.js",
                 "timeline.js",
+                "histogram.js",
             ):
                 return self.send({"error": "Unknown page."}, status=404)
             return self.send(
@@ -304,6 +305,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(records.tobytes(), "application/octet-stream")
             lo = number("lo", 0, 0, view.length - 1)
             hi = number("hi", view.length, lo + 1, view.length)
+            if action == "histogram":
+                boxes = json.loads(q["boxes"]) if "boxes" in q else None
+                return self.send(
+                    view.histogram(lo, hi, q.get("field", "adc"), iog, boxes)
+                )
             if action == "timeline":
                 return self.send(
                     view.timeline(

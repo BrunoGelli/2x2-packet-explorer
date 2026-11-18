@@ -180,6 +180,39 @@ class View:
             },
         }
 
+    def histogram(self, lo, hi, field, iog=0, boxes=None):
+        """One count per mapped charge packet. Pixel boxes use tile raster coordinates."""
+        if field not in FIELD_LEVELS:
+            raise ValueError("Unknown packet histogram field.")
+        mask = None
+        if boxes is not None:
+            tiles = {t["tile"]: t for t in self.geometry.tiles if t["iog"] == iog}
+            if not isinstance(boxes, list) or not 1 <= len(boxes) <= len(tiles):
+                raise ValueError("Select a region on one anode.")
+            mask = np.zeros(self.geometry.size, dtype=bool)
+            for box in boxes:
+                if (
+                    not isinstance(box, list)
+                    or len(box) != 5
+                    or any(type(n) is not int for n in box)
+                ):
+                    raise ValueError("Invalid histogram region.")
+                tile, x0, y0, x1, y1 = box
+                t = tiles.get(tile)
+                if not t or not (
+                    0 <= x0 < x1 <= t["width"] and 0 <= y0 < y1 <= t["height"]
+                ):
+                    raise ValueError("Histogram region exceeds its tile.")
+                start, w, h = t["start"], t["width"], t["height"]
+                mask[start : start + w * h].reshape(h, w)[y0:y1, x0:x1] = True
+        counts = np.zeros(FIELD_LEVELS[field], dtype=np.int64)
+        for _, data in self.slices("hits", lo, hi, iog):
+            values = field_values(data, field)
+            if mask is not None:
+                values = values[mask[data["pixel"]]]
+            counts += np.bincount(values, minlength=len(counts))
+        return {"counts": counts.tolist()}
+
     def map(self, play, width, hold, field, stat, iog=0):
         if (
             field

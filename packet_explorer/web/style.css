@@ -1,7 +1,7 @@
 /* All colors used by the interface and its canvas plots follow the same theme. */
 :root {
   color-scheme: light;
-  --bg: #f3f5f8;
+  --bg: #f6f7f7;
   --surface: #ffffff;
   --inside: #f5f7fa;
   --control: #ffffff;
@@ -24,15 +24,15 @@
   --gap: #eadbc3;
   --error-text: #9b3033;
   --error-bg: #fff1ed;
-  --shadow: 0 2px 5px #203c5710;
+  --shadow: 0 1px 3px #172b3d08;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #151a23;
-  --surface: #1c2430;
-  --inside: #19212b;
-  --control: #242f3c;
+  --bg: #181a1d;
+  --surface: #22262a;
+  --inside: #1d2125;
+  --control: #2a2f34;
   --hover: #303f4d;
   --line: #374452;
   --line-strong: #627789;
@@ -165,6 +165,7 @@ button.primary,
   font-size: 12px;
 }
 .mast .primary {
+  border-radius: 18px;
   padding-inline: 16px;
 }
 main {
@@ -291,9 +292,23 @@ small,
 .buttons {
   gap: 4px;
 }
+.movement .buttons {
+  gap: 2px;
+  padding: 3px;
+  border-radius: 13px;
+  background: var(--inside);
+}
 .movement .buttons button {
+  border: 0;
+  border-radius: 10px;
   min-width: 34px;
   font-size: 16px;
+}
+.movement .buttons button:not(.play) {
+  background: transparent;
+}
+.movement .buttons button:not(.play):hover {
+  background: var(--hover);
 }
 .movement button.play {
   min-width: 43px;
@@ -682,9 +697,17 @@ dialog::backdrop {
   display: flex;
   gap: 9px;
   align-items: center;
-  padding: 8px 4px;
+  padding: 9px 7px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
   font-size: 13px;
   cursor: pointer;
+}
+.file-row:hover {
+  background: var(--inside);
+}
+.file-row:has(input:checked) {
+  background: var(--tint);
 }
 .file-row input {
   accent-color: var(--mint);
@@ -817,4 +840,80 @@ button.play[aria-label="Pause"]::before {
   border-left: 3px solid var(--on-accent);
   border-right: 3px solid var(--on-accent);
   margin-left: 0;
+}
+
+/* Shared disclosure treatment for the analysis panels. */
+.disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+  min-height: 46px;
+  font-size: 14px;
+  padding: 10px 16px;
+}
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+.disclosure > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 1.7px solid var(--muted);
+  border-bottom: 1.7px solid var(--muted);
+  transform: rotate(45deg);
+  margin-left: auto;
+  flex: none;
+}
+.disclosure[open] > summary::after {
+  transform: rotate(225deg);
+}
+.disclosure > summary:hover {
+  background: var(--inside);
+}
+.disclosure > summary span {
+  margin-left: 0;
+}
+.disclosure[open] > .ins-content {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.hist-toolbar {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.hist-toolbar button {
+  font-size: 12px;
+  min-height: 28px;
+}
+.hist-caption {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 14px 0 5px;
+}
+.hist-caption strong {
+  font-size: 13px;
+}
+#histSummary {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+#histPlot {
+  width: 100%;
+  height: 155px;
+  border-radius: 8px;
+  background: var(--inside);
+  cursor: crosshair;
+}
+#regionPrompt {
+  background: var(--tint);
+  padding: 6px 14px;
+  margin: 0 14px 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
 }

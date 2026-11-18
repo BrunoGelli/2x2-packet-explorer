@@ -42,6 +42,59 @@ def check_plane_navigation(page, expect):
     expect(page.locator(".plane canvas:visible")).to_have_count(8)
 
 
+def check_histogram(page, expect):
+    summary = page.locator("#histSummary")
+    page.locator("#histogram summary").click()
+    expect(summary).to_have_text("4 packets · Mean 12")
+    page.locator("#histFit").check()
+    plot = page.locator("#histPlot")
+    plot.scroll_into_view_if_needed()
+    r = plot.bounding_box()
+    # Codes 8 and 16 plus one empty bin at either end give codes 7–17.
+    page.mouse.move(r["x"] + 58 + 1.5 * (r["width"] - 74) / 11, r["y"] + 50)
+    expect(page.locator("#tooltip")).to_contain_text("ADC dataword 8")
+    expect(page.locator("#tooltip")).to_contain_text("2 packets")
+    page.locator("#histArea").select_option("1/2")
+    expect(summary).to_have_text("0 packets in this window")
+    page.locator("#histArea").select_option("1/1")
+    expect(summary).to_have_text("2 packets · Mean 12")
+    page.locator("#histField").select_option("local_fifo")
+    expect(summary).to_have_text("2 packets · Mean 1.5")
+    page.get_by_role("button", name="Expand IOG 1", exact=True).click()
+    page.locator("#drawRegion").click()
+    canvas = page.get_by_label("IOG 1 detector map")
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    pitch = min((box["width"] - 6) / 140, (box["height"] - 6) / 280)
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    # Cross the top-left and top-right tiles, including the fixture pixel.
+    page.mouse.move(cx - 68 * pitch, cy - 85 * pitch)
+    page.mouse.down()
+    page.mouse.move(cx + 5 * pitch, cy - 70 * pitch, steps=4)
+    page.mouse.up()
+    expect(page.locator("#histArea")).to_have_value("drawn")
+    expect(summary).to_have_text("2 packets · Mean 1.5")
+    page.locator("#histSamples").select_option("pixels")
+    expect(summary).to_have_text("1 pixel · Mean 1")
+    page.locator("#field").select_option("adc")
+    page.locator("#stat").select_option("median")
+    expect(summary).to_have_text("1 pixel · Mean 12")
+    page.locator("#hold").fill("10")
+    page.locator("#hold").press("Tab")
+    page.get_by_role("button", name="Step forward", exact=True).click()
+    expect(summary).to_have_text("0 pixels in this window")
+    page.locator("#histSamples").select_option("packets")
+    expect(summary).to_have_text("0 packets in this window")
+    page.get_by_role("button", name="Step backward", exact=True).click()
+    expect(summary).to_have_text("2 packets · Mean 1.5")
+    page.locator("#histogram summary").click()
+    page.locator("#hold").fill("0")
+    page.locator("#hold").press("Tab")
+    page.locator("#field").select_option("occupancy")
+    page.get_by_role("button", name="Show all planes").click()
+    assert not page.locator("#inspect").evaluate("el => el.open")
+
+
 @pytest.mark.skipif(
     not os.environ.get("PACKET_EXPLORER_BROWSER"),
     reason="Set PACKET_EXPLORER_BROWSER to a Chromium executable.",
@@ -68,6 +121,7 @@ def test_browser_packet_playback(packet_file, tmp_path):
             page.get_by_role("button", name="Step forward", exact=True).click()
             pw.expect(page.locator("#tick")).to_have_value("3")
             pw.expect(page.locator("#mapSummary")).to_contain_text("4 packets")
+            check_histogram(page, pw.expect)
             check_plane_navigation(page, pw.expect)
             page.get_by_label("Theme", exact=True).select_option("dark")
             pw.expect(page.locator("html")).to_have_attribute("data-theme", "dark")

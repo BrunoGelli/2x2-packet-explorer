@@ -31,7 +31,7 @@ The selector browses the filesystem of the machine running the reader. Checked f
 packet-explorer serve --jupyter --root "$PWD"
 ```
 
-Open the full HTTPS link printed in that terminal, including the launch key. Jupyter proxies the request back to the automatically selected loopback port on the same node. Leave the command running while exploring. Named servers use their own service prefix. Add `--port 8766` to request a particular port.
+Open the full HTTPS link printed in that terminal, including the launch key. Jupyter proxies the request back to the automatically selected loopback port on the same node. Leave the command running while exploring. The startup banner prints the server PID, hostname and a ready-to-copy `kill` command. To stop it from a second terminal, run that command on the printed host. Named servers use their own service prefix. Add `--port 8766` to request a particular port.
 
 ### From an SSH session
 
@@ -69,10 +69,14 @@ packet-explorer index --cache-dir "$SCRATCH/2x2-packet-explorer" /path/to/packet
 | **Map visible interval** | Set the map window to exactly the zoomed interval. **First-hit time** colors each pixel by the first hit’s offset from the interval start, in ticks. |
 | **Spatial zoom** | Click an IOG heading or double-click its map to expand it. Use the wheel to zoom around a pixel and drag to pan. Use **Fit** for the whole plane or **Fill** to cover the expanded view. The **−** and **+** controls zoom visible planes together. Expand and zoom preserve the timeline selection. Use the **Planes** selector to filter both timelines and map. |
 | **Color scale** | For numeric fields, **Full range** uses the field’s hardware range when defined, or zero to the current peak for count, rate and first-hit time. **Window range** uses the minimum and maximum across current active pixels. Held pixels stay gray. **Custom range** keeps fixed limits through playback and clips colors at either end. Each field remembers its settings while the page is open. |
+| **Histogram** | Expand the panel below **Packet rate**. **Charge packets** counts every mapped charge packet in the playhead window, with one bin per ADC, FIFO, trigger-type or flag code. **Active map pixels** counts each active pixel once using the current map field and statistic. Held-only pixels are excluded from both. Hover a bin for its exact count. **Fit x-axis to data** expands the occupied packet-code range. |
+| **Histogram area** | Choose the selected planes, an IOG, or one tile. For a custom area, click **Draw region**, then drag a rectangle on one IOG. It can cross tile boundaries. Its dashed outline stays attached to the selected pixels through pan, zoom and playback. Changing the clock or the global planes filter resets the area. |
 | **Theme** | Choose **Light**, **Dark** or **System** in the header. The browser remembers the preference. |
 | **Map and inspector** | Hover a pixel to read its IOG, tile, chip ID and channel below the map, including on quiet pixels. Click a physical pixel to page through its contributing packet rows. Click a table row for the complete recorded fields. **Source rows** gives direct access to every input row, including configuration, timestamps, unmapped addresses and rejected packets. |
 
-**To examine a WAT**, find a rate spike and drag across it. Enable **Active chips / bin** to see how much of the detector participates. Select **Map visible interval → First-hit time** to see the spatial onset. Then use **Single tick** and set **Hold** to e.g. 10 µs to watch the footprint accumulate across 100 cycles. **Peak rate** seeks to the first occupied tick in the highest-rate visible bin. A selection initially opens at the peak of its overview.
+**To examine a WAT**, find a rate spike and drag across it. Enable **Active chips / bin** to see how much of the detector participates. Select **Map visible interval → First-hit time** to see the spatial onset. Open **Histogram**, choose **Charge packets → ADC dataword**, and draw a region around the footprint to inspect its spectrum. Then use **Single tick** and set **Hold** to e.g. 10 µs to watch the footprint accumulate across 100 cycles. **Peak rate** seeks to the first occupied tick in the highest-rate visible bin. A selection initially opens at the peak of its overview.
+
+![ADC dataword histogram for 98 packets on IOG 1, tile 5, in a 1 ms window of Run 0070043](docs/tile-adc-histogram.png)
 
 **Pixel fields** include occupancy, count, rate, first-hit time, ADC dataword, local/shared FIFO state, trigger type, first-packet flag and downstream marker. Value fields offer latest, mean, exact median, minimum and maximum. FIFO states also offer the fraction of contributing packets reporting full (code 3). A numeric zero and an empty pixel have distinct colors. Raw diagnostic FIFO counts remain available in the source inspector.
 

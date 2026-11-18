@@ -223,6 +223,10 @@
             >
           </div>
         </div>
+        <div id="regionPrompt" hidden>
+          Drag across an IOG to select histogram pixels.
+          <button type="button" class="link" id="cancelRegion">Cancel</button>
+        </div>
         <div id="modules"></div>
         <div class="map-footer">
           <div id="pixelReadout" aria-label="Pixel address">
@@ -267,6 +271,41 @@
           ><button class="link" id="useRange">Map visible interval</button>
         </div>
       </section>
+      <details id="histogram" class="panel disclosure">
+        <summary>Histogram <span id="histWindow">Current window</span></summary>
+        <div class="ins-content">
+          <div class="hist-toolbar inline-controls">
+            <label
+              >Samples
+              <select id="histSamples">
+                <option value="packets">Charge packets</option>
+                <option value="pixels">Active map pixels</option>
+              </select></label
+            >
+            <label id="histFieldLabel"
+              >Field
+              <select id="histField" aria-label="Histogram field"></select
+            ></label>
+            <label
+              >Area
+              <select id="histArea" aria-label="Histogram area"></select
+            ></label>
+            <button id="drawRegion" type="button" aria-pressed="false">
+              Draw region
+            </button>
+            <label id="histFitLabel" class="check"
+              ><input id="histFit" type="checkbox" />Fit x-axis to data</label
+            >
+          </div>
+          <div class="hist-caption">
+            <strong id="histTitle"></strong><span id="histSummary"></span>
+          </div>
+          <canvas
+            id="histPlot"
+            aria-label="Histogram of the current window"
+          ></canvas>
+        </div>
+      </details>
       <details id="inspect" class="panel disclosure">
         <summary>
           Packet inspector <span id="inspectionLabel">Current window</span>
