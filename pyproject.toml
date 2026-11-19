@@ -10,7 +10,8 @@ requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "h5py>=3.8"]
 
 [project.optional-dependencies]
-test = ["pytest>=7"]
+wat = ["matplotlib>=3.6"]
+test = ["pytest>=7", "matplotlib>=3.6"]
 
 [project.scripts]
 packet-explorer = "packet_explorer.cli:main"

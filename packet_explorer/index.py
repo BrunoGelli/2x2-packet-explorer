@@ -12,11 +12,12 @@ import h5py
 import numpy as np
 
 PERIOD = 10_000_000
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 CHUNK_ROWS = 131_072
 HIT = np.dtype(
     [
         ("tick", "<i8"),
+        ("receipt_tick", "<i8"),
         ("row", "<u8"),
         ("pixel", "<i4"),
         ("adc", "u1"),
@@ -113,6 +114,9 @@ class Clock:
             pixel[selected],
         )
         chosen = d[selected]
+        # PACMAN receipt belongs to the recorded reset epoch, including for
+        # late hits whose ASIC tick was placed in the preceding interval.
+        hits["receipt_tick"] = (offsets[epoch] + receipt)[selected]
         hits["adc"] = chosen["dataword"]
         hits["local_fifo"], hits["shared_fifo"] = (
             chosen["local_fifo"],

@@ -8,6 +8,7 @@ from threading import Timer
 from .geometry import Geometry
 from .index import open_index
 from .server import Workspace, make_server
+from . import wat
 
 
 def main():
@@ -34,13 +35,20 @@ def main():
     cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
     if os.environ.get("NERSC_HOST") and os.environ.get("SCRATCH"):
         cache_home = Path(os.environ["SCRATCH"])
-    for p in (serve, prepare):
+    analyze = wat.add_parser(sub)
+    for p in (serve, prepare, analyze):
         p.add_argument(
             "--cache-dir", type=Path, default=cache_home / "2x2-packet-explorer"
         )
     args = parser.parse_args()
     files = [p.expanduser().resolve() for p in args.files]
     cache = args.cache_dir.expanduser()
+    if args.action == "wat":
+        try:
+            wat.run(files, cache, args.output.expanduser(), wat.settings(args))
+        except (OSError, ValueError, ImportError) as exc:
+            parser.exit(2, f"WAT analysis: {exc}\n")
+        return
     if args.action == "index":
         geom = Geometry()
         for path in files:

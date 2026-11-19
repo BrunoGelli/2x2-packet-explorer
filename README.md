@@ -97,6 +97,17 @@ The first two files in the [November 16 pedestal run](https://portal.nersc.gov/p
 
 **Pixel fields** include occupancy, count, rate, first-hit time, ADC dataword, local/shared FIFO state, trigger type, first-packet flag and downstream marker. Value fields offer latest, mean, exact median, minimum and maximum. FIFO states also offer the fraction of contributing packets reporting full (code 3). A numeric zero and an empty pixel have distinct colors. Raw diagnostic FIFO counts remain available in the source inspector.
 
+## Batch analysis of whole-anode triggers
+
+From the repository checkout, install the analysis extra and pass one or more closed packet files. Choose the trigger lane appropriate to the recording.
+
+```bash
+python -m pip install -e '.[wat]'
+packet-explorer wat /path/to/packet-*.h5 --output wat-results --veto-trigger 5:2 --fit
+```
+
+The batch report measures recorded packet rate before and after spatially broad pulses on every tile. It excludes SYNC-83 noise, compares ASIC and receipt time, and records the ticks of examples for the interactive explorer. Selection, baseline, and follow-up windows are configurable. [WAT analysis and output tables](docs/wat-recovery.md)
+
 ## Timing and coverage
 
 - Input is a closed LArPix ASIC v2 packet HDF5 file with a flat `/packets` dataset (formats 2.3 / 2.4). The reader opens inputs read-only.
@@ -107,7 +118,7 @@ The first two files in the [November 16 pedestal run](https://portal.nersc.gov/p
 
 ## Cache and performance
 
-The reader makes one chunked HDF5 pass per new file. It writes sorted runs containing the local tick, pixel, source row and common display fields. Range queries binary-search memory-mapped runs. Only requested rate bins, clustered markers, active/held pixels or a page of original rows go to the browser. Large-window exact medians use a bounded per-anode histogram. Each cache entry is published atomically and keyed by resolved path, size, modification time and index format.
+The reader makes one chunked HDF5 pass per new file. Cache version 2 also stores the unrolled receipt tick for each mapped charge packet. It writes sorted runs containing the local tick, pixel, source row and common display fields. Range queries binary-search memory-mapped runs. Only requested rate bins, clustered markers, active/held pixels or a page of original rows go to the browser. Large-window exact medians use a bounded per-anode histogram. Each cache entry is published atomically and keyed by resolved path, size, modification time and index format.
 
 The cache defaults to `$SCRATCH/2x2-packet-explorer` in a NERSC environment and the user's cache directory elsewhere. Cache entries can be removed after closing the server.
 
@@ -115,7 +126,7 @@ The cache defaults to `$SCRATCH/2x2-packet-explorer` in a NERSC environment and 
 
 The interactive viewer was exercised in Chromium with two consecutive Run 0070043 files covering 241.66 detector seconds and 13,378,894 source rows. The supplied `23_24_27_CST` file contains 6,590,716 rows, including 4,345,005 mapped charge packets, 960 SYNC-83 markers, 96 SYNC-72 markers and 342 trigger markers. A direct HDF5 check of a 5 ms interval reproduced all 100 selected row IDs and all 87 pixel ADC medians using the original PacMon coordinates.
 
-On the development machine, the supplied 239 MB file took about 3.7 s to index and used about 104 MB of cache. A cached whole-file rate/marker query took about 25 ms. A full-file exact ADC median map took about 1.5 s. These backend observations exclude browser rendering and remote network latency. [Test recording](https://portal.nersc.gov/project/dune/data/2x2/nearline_run3/packet/Operations/20261106-LowIntensityBeam_LRSselfTrigger_Physics/packet-0070043-2026_11_06_23_24_27_CST.h5)
+With cache version 1 on the development machine, the supplied 239 MB file took about 3.7 s to index and used about 104 MB of cache. A cached whole-file rate/marker query took about 25 ms. A full-file exact ADC median map took about 1.5 s. These backend observations exclude browser rendering and remote network latency. [Test recording](https://portal.nersc.gov/project/dune/data/2x2/nearline_run3/packet/Operations/20261106-LowIntensityBeam_LRSselfTrigger_Physics/packet-0070043-2026_11_06_23_24_27_CST.h5)
 
 ## Development
 
