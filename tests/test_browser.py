@@ -8,6 +8,25 @@ import pytest
 from packet_explorer.server import Workspace, make_server
 
 
+def check_rate_scale(page, expect):
+    scale = page.get_by_label("Packet rate Y scale")
+    expect(scale).to_have_value("linear")
+    viewport = page.locator("#viewport").inner_text()
+    playhead = page.locator("#tick").input_value()
+    charts = page.locator("#rates, #overview")
+
+    def images():
+        return charts.evaluate_all("canvases => canvases.map(c => c.toDataURL())")
+
+    linear = images()
+    scale.select_option("log")
+    assert all(a != b for a, b in zip(linear, images()))
+    expect(page.locator("#viewport")).to_have_text(viewport)
+    expect(page.locator("#tick")).to_have_value(playhead)
+    scale.select_option("linear")
+    assert images() == linear
+
+
 def check_plane_navigation(page, expect):
     page.get_by_role("button", name="Expand IOG 1", exact=True).click()
     expect(page.locator(".plane canvas:visible")).to_have_count(1)
@@ -221,6 +240,7 @@ def test_browser_packet_playback(packet_file, pedestal_files, tmp_path):
             page.get_by_role("button", name="Step forward", exact=True).click()
             pw.expect(page.locator("#tick")).to_have_value("3")
             pw.expect(page.locator("#mapSummary")).to_contain_text("4 packets")
+            check_rate_scale(page, pw.expect)
             check_calibration(page, pw.expect, pedestal_files)
             check_histogram(page, pw.expect)
             check_plane_navigation(page, pw.expect)

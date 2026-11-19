@@ -23,8 +23,30 @@ const short = (n) =>
     ? (n / 1e6).toFixed(1) + "M"
     : n >= 1e3
       ? (n / 1e3).toFixed(1) + "k"
-      : n.toFixed(0);
+      : n > 0 && n < 1
+        ? n.toLocaleString(undefined, { maximumSignificantDigits: 3 })
+        : n.toFixed(0);
 const clamp = (x, min, max) => Math.max(min, Math.min(max, x));
+function rateAxis(rates, logarithmic) {
+  if (!logarithmic) {
+    const max = Math.max(1, ...rates);
+    return { ticks: [0, max / 2, max], fraction: (hz) => hz / max };
+  }
+  const positive = rates.filter((hz) => hz > 0);
+  if (!positive.length) return { ticks: [], fraction: () => 0 };
+  const upper = Math.ceil(Math.log10(Math.max(...positive)));
+  const lower = Math.min(
+    upper - 1,
+    Math.floor(Math.log10(Math.min(...positive))),
+  );
+  const decades = upper - lower;
+  const intervals = Math.min(4, decades);
+  const ticks = Array.from(
+    { length: intervals + 1 },
+    (_, i) => 10 ** (lower + Math.round((i * decades) / intervals)),
+  );
+  return { ticks, fraction: (hz) => (Math.log10(hz) - lower) / decades };
+}
 const tint = (name, colors) =>
   name === "SYNC 83"
     ? colors.amber
@@ -43,6 +65,8 @@ export class Timelines {
     this.rate = $("rates");
     this.marks = $("markers");
     this.over = $("overview");
+    this.scale = $("rateScale");
+    this.scale.addEventListener("change", () => this.draw());
     this.rects = [];
     this.resize = new ResizeObserver(() => this.draw());
     for (const c of [this.rate, this.marks, this.over]) {
@@ -294,12 +318,18 @@ export class Timelines {
           (data.counts.reduce((n, a) => n + a[i], 0) * 1e7) /
           (data.edges[i + 1] - t),
       );
-    const max = Math.max(1, ...rates);
+    const logarithmic = this.scale.value === "log";
+    const axis = rateAxis(rates, logarithmic);
+    const ypos = (hz) => bottom - axis.fraction(hz) * (bottom - top);
     if (!mini) {
-      for (const v of [0, 0.5, 1]) {
-        const y = bottom - v * (bottom - top);
+      if (!axis.ticks.length) {
         ctx.fillStyle = this.colors.muted;
-        ctx.fillText(short(v * max) + " Hz", 12, y + 3);
+        ctx.fillText("No packets in this interval", left + 6, top + 12);
+      }
+      for (const hz of axis.ticks) {
+        const y = ypos(hz);
+        ctx.fillStyle = this.colors.muted;
+        ctx.fillText(short(hz) + " Hz", 12, y + 3);
         ctx.strokeStyle = this.colors.line;
         ctx.beginPath();
         ctx.moveTo(left, y);
@@ -312,14 +342,22 @@ export class Timelines {
     ctx.rect(left, 0, right - left, h);
     ctx.clip();
     ctx.beginPath();
-    ctx.moveTo(xpos(data.edges[0]), bottom);
-    rates.forEach((v, i) => {
-      const y = bottom - ((bottom - top) * v) / max;
-      ctx.lineTo(xpos(data.edges[i]), y);
-      ctx.lineTo(xpos(data.edges[i + 1]), y);
+    // Each uninterrupted sequence of positive bins forms its own filled
+    // step on a log axis. Empty intervals have no logarithmic ordinate.
+    rates.forEach((hz, i) => {
+      if (logarithmic && hz === 0) return;
+      const x1 = xpos(data.edges[i]),
+        x2 = xpos(data.edges[i + 1]);
+      const y = ypos(hz);
+      if (i === 0 || (logarithmic && rates[i - 1] === 0))
+        ctx.moveTo(x1, bottom);
+      ctx.lineTo(x1, y);
+      ctx.lineTo(x2, y);
+      if (i === rates.length - 1 || (logarithmic && rates[i + 1] === 0)) {
+        ctx.lineTo(x2, bottom);
+        ctx.closePath();
+      }
     });
-    ctx.lineTo(xpos(data.edges.at(-1)), bottom);
-    ctx.closePath();
     ctx.fillStyle = this.colors.rateFill;
     ctx.fill();
     ctx.strokeStyle = this.colors.blue;
@@ -337,7 +375,11 @@ export class Timelines {
       ctx.stroke();
       ctx.textAlign = "right";
       ctx.fillStyle = this.colors.amber;
-      ctx.fillText("chips/bin · max " + peak, right - 5, top + 6);
+      ctx.fillText(
+        (logarithmic ? "chips/bin (linear)" : "chips/bin") + " · max " + peak,
+        right - 5,
+        top + 6,
+      );
     }
     ctx.restore();
     if (!mini) {
