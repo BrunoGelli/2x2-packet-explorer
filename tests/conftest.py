@@ -77,3 +77,28 @@ def sample(path, geom, second=1794029067, conflicting=False):
 @pytest.fixture
 def packet_file(tmp_path, geom):
     return sample(tmp_path / "example.h5", geom)
+
+
+@pytest.fixture
+def pedestal_files(tmp_path):
+    paths = []
+    # Two routes on the same tile point to the same physical pixel. A second
+    # file contributes three samples to the first file's one.
+    for i, adc in enumerate(([11], [12, 13, 14])):
+        path = tmp_path / f"pedestal-{i}.h5"
+        a = np.zeros(len(adc) + 4, DTYPE)
+        a["io_group"] = 1
+        a["io_channel"] = 1 + i
+        a["chip_id"] = 11
+        a["trigger_type"] = 3
+        a["valid_parity"] = 1
+        a["dataword"][: len(adc)] = adc
+        a["dataword"][len(adc) :] = 255
+        a["valid_parity"][-4] = 0
+        a["fifo_diagnostics_enabled"][-3] = 1
+        a["packet_type"][-2] = 6
+        a["io_channel"][-1] = 0
+        with h5py.File(path, "w") as f:
+            f["packets"] = a
+        paths.append(path)
+    return paths

@@ -26,6 +26,9 @@ const s = {
   field: "occupancy",
   stat: "last",
   selection: new Set(),
+  pedestalFiles: [],
+  calibration: null,
+  trigger: "all",
   running: false,
   pixel: null,
   raw: false,
@@ -37,6 +40,10 @@ let detector,
   timelines,
   root,
   dir = ".",
+  pickerKind = "recording",
+  draft = new Set(),
+  calVersion = 0,
+  directories = { recording: ".", pedestal: "." },
   parent = null,
   listed = [],
   folders = [],
@@ -77,7 +84,17 @@ async function request(name, params = {}, options = {}) {
     : res.json();
 }
 const query = (name, p = {}, opts = {}) =>
-  request(name, { job: s.job, scope: s.scope, iog: s.iog, ...p }, opts);
+  request(
+    name,
+    {
+      job: s.job,
+      scope: s.scope,
+      iog: s.iog,
+      calibration: s.calibration || undefined,
+      ...p,
+    },
+    opts,
+  );
 function replaceRequest(key) {
   activeRequests.get(key)?.abort();
   const ctrl = new AbortController();
@@ -127,6 +144,7 @@ async function map() {
   timelines.draw();
   await histogram.setFrame({
     job: s.job,
+    calibration: s.calibration || undefined,
     scope: s.scope,
     lo: Math.max(0, s.t + 1 - s.width),
     hi: s.t + 1,
@@ -266,6 +284,7 @@ const fields = {
   rate: null,
   first_hit: null,
   adc: 256,
+  adc_corrected: 256,
   local_fifo: 4,
   shared_fifo: 4,
   trigger_type: 4,
@@ -532,6 +551,97 @@ async function openFiles(paths) {
   await setView(session.scopes[0].key);
 }
 
+function calibrationMessage(text) {
+  $("calibrationStatus").textContent = text;
+  $("calibrationStatus").hidden = !text;
+}
+async function applyCalibration(key, info, paths) {
+  s.calibration = key;
+  s.pedestalFiles = paths;
+  s.trigger = info?.trigger || "all";
+  $("calibrationDetails").hidden = !info;
+  if (info) {
+    $("calibrationSummary").textContent =
+      fmt(info.pixels) +
+      " / " +
+      fmt(info.total_pixels) +
+      " pixels · " +
+      fmt(info.samples) +
+      " samples";
+    $("calibrationCuts").textContent =
+      "Trigger selection: " +
+      info.trigger +
+      ". Mapped, parity-valid data packets with FIFO diagnostics off. RMS is the population standard deviation.";
+    $("calibrationSources").replaceChildren(
+      ...info.files.map((path) => node("li", path)),
+    );
+  }
+  const field = $("field");
+  field.querySelector('[value="adc_corrected"]').disabled = !info;
+  if (!info && field.value === "adc_corrected") {
+    field.value = "adc";
+    stats();
+  }
+  histogram.setCalibrated(!!info);
+  calibrationMessage("");
+  await Promise.all([map(), inspect()]);
+}
+async function calibrate(paths, trigger) {
+  const version = ++calVersion;
+  $("picker").close();
+  calibrationMessage("Opening pedestal files…");
+  try {
+    const { job } = await request(
+      "calibrate",
+      {},
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: paths, trigger }),
+      },
+    );
+    while (version === calVersion) {
+      const st = await request("calibration-status", { calibration: job });
+      if (version !== calVersion) return;
+      if (st.state === "error") throw Error(st.error);
+      if (st.state === "ready") {
+        await applyCalibration(job, st, paths);
+        return;
+      }
+      if (st.state === "indexing")
+        calibrationMessage(
+          "Reading pedestal " +
+            st.number +
+            "/" +
+            st.files +
+            " · " +
+            st.file +
+            (st.total
+              ? " · " + Math.floor((100 * st.done) / st.total) + "%"
+              : ""),
+        );
+      await sleep(300);
+    }
+  } catch (e) {
+    if (version === calVersion) calibrationMessage("Calibration: " + e.message);
+  }
+}
+async function pickFiles(kind) {
+  pause();
+  pickerKind = kind;
+  const pedestal = kind === "pedestal";
+  draft = new Set(pedestal ? s.pedestalFiles : s.selection);
+  $("pickerTitle").textContent = pedestal
+    ? "Select pedestal files"
+    : "Select packet files";
+  $("openFiles").textContent = pedestal
+    ? "Apply calibration"
+    : "Open selection";
+  $("triggerLabel").hidden = !pedestal;
+  $("pedTrigger").value = s.trigger;
+  await browse(directories[kind]);
+  if (!$("picker").open) $("picker").showModal();
+}
 function listFiles() {
   const list = $("listing");
   list.replaceChildren();
@@ -547,10 +657,10 @@ function listFiles() {
     const label = node("label", "", "file-row"),
       check = document.createElement("input");
     check.type = "checkbox";
-    check.checked = s.selection.has(f.path);
+    check.checked = draft.has(f.path);
     check.onchange = () => {
-      if (check.checked) s.selection.add(f.path);
-      else s.selection.delete(f.path);
+      if (check.checked) draft.add(f.path);
+      else draft.delete(f.path);
       selectionCount();
     };
     label.append(
@@ -565,14 +675,14 @@ function listFiles() {
   selectionCount();
 }
 function selectionCount() {
-  $("selectedCount").textContent = s.selection.size + " selected";
-  $("openFiles").disabled = !s.selection.size;
+  $("selectedCount").textContent = draft.size + " selected";
+  $("openFiles").disabled = !draft.size;
 }
 async function browse(path) {
   const id = ++catalogId,
     r = await request("catalog", { dir: path });
   if (id !== catalogId) return;
-  dir = r.directory;
+  dir = directories[pickerKind] = r.directory;
   parent = r.parent;
   listed = r.files;
   folders = r.folders;
@@ -653,6 +763,12 @@ async function inspect() {
     ["timestamp", "Raw timestamp"],
     ["receipt_timestamp", "Receipt"],
     ["dataword", "Dataword"],
+    ...(s.calibration
+      ? [
+          ["pedestal_mean", "Pedestal"],
+          ["adc_corrected", "ADC − pedestal"],
+        ]
+      : []),
     ["local_fifo", "Local FIFO"],
     ["shared_fifo", "Shared FIFO"],
   ];
@@ -663,7 +779,17 @@ async function inspect() {
   for (const r of res.rows) {
     const tr = node("tr", "");
     tr.tabIndex = 0;
-    for (const [k] of fields) tr.append(node("td", r[k] ?? "—"));
+    for (const [k] of fields)
+      tr.append(
+        node(
+          "td",
+          r[k] === undefined
+            ? "—"
+            : ["adc_corrected", "pedestal_mean"].includes(k)
+              ? fmt(r[k])
+              : r[k],
+        ),
+      );
     const detail = () => {
       $("rowDetail").hidden = false;
       $("rowDetail").textContent =
@@ -765,10 +891,11 @@ async function main() {
     putDuration("step", 1);
     return seek(s.t);
   });
-  bind("files", "click", async () => {
-    pause();
-    await browse(dir);
-    $("picker").showModal();
+  bind("files", "click", () => pickFiles("recording"));
+  bind("calibrate", "click", () => pickFiles("pedestal"));
+  bind("removeCalibration", "click", () => {
+    ++calVersion;
+    return applyCalibration(null, null, []);
   });
   bind("closePicker", "click", () => $("picker").close());
   bind("up", "click", () => browse(parent));
@@ -776,14 +903,19 @@ async function main() {
   bind("allVisible", "click", () => {
     const q = $("filter").value.toLowerCase();
     for (const f of listed)
-      if (f.name.toLowerCase().includes(q)) s.selection.add(f.path);
+      if (f.name.toLowerCase().includes(q)) draft.add(f.path);
     listFiles();
   });
   bind("clearFiles", "click", () => {
-    s.selection.clear();
+    draft.clear();
     listFiles();
   });
-  bind("openFiles", "click", () => openFiles([...s.selection]));
+  bind("openFiles", "click", () => {
+    if (pickerKind === "pedestal")
+      return calibrate([...draft], $("pedTrigger").value);
+    s.selection = new Set(draft);
+    return openFiles([...s.selection]);
+  });
   bind("scope", "change", () => setView($("scope").value));
   bind("iog", "change", () => filterIOG(Number($("iog").value)));
   bind("tick", "change", () => {
@@ -879,8 +1011,7 @@ async function main() {
     s.selection = new Set(init.initial);
     await openFiles(init.initial);
   } else {
-    await browse(".");
-    $("picker").showModal();
+    await pickFiles("recording");
   }
 }
 main().catch(report);

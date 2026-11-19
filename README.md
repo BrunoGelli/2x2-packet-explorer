@@ -56,6 +56,20 @@ To index files ahead of time in a batch job, use the same cache directory when o
 packet-explorer index --cache-dir "$SCRATCH/2x2-packet-explorer" /path/to/packet/*.h5
 ```
 
+## Apply a pedestal calibration
+
+Start the reader with a browsing root that contains both the physics and pedestal directories. At NERSC, for example, launch from the nearline packet `Operations` directory with `packet-explorer serve --jupyter --root "$PWD"`. Open the physics recording as usual, then:
+
+1. Click **Calibration**, browse to **20261116-Pedestal_LowPurity**, and check one or more HDF5 files. **Select filtered files** selects the whole matching list. Click **Apply calibration**.
+2. Choose **ADC − pedestal** on the map, as the 1D packet histogram field, or as either 2D packet axis. For one entry per active pixel, choose **Active map pixels → Current map value** with the map on the corrected field.
+3. Expand **Pedestal calibration** for the source paths, accepted sample count, physical-pixel coverage and trigger selection. Click a pixel or packet row in the inspector for raw ADC, pedestal mean, RMS, sample count and signed corrected ADC. **Remove calibration** returns calibrated fields to raw ADC.
+
+For each physical pixel the reader pools the accepted samples across files and subtracts their arithmetic mean from the recorded ADC dataword. The reported RMS is the population standard deviation about that mean. Calibration uses mapped type-0 data packets with valid parity and FIFO diagnostics off, including samples before the first SYNC. **All trigger codes** is the default and includes ADC codes 0 and 255. A specific trigger code can be selected for runs taken in a dedicated mode. Reusing a file with the same trigger selection loads its cached statistics. Choosing a different calibration keeps the recording and playhead in place.
+
+Negative and fractional corrected ADC values retain their sign and precision. A pixel with zero accepted pedestal samples has no corrected value. The map and histograms report missing coverage for the current selection. Raw packet counts still include those pixels.
+
+The first two files in the [November 16 pedestal run](https://portal.nersc.gov/project/dune/data/2x2/nearline_run3/packet/Operations/20261116-Pedestal_LowPurity/) yielded 48,510,387 accepted samples on 330,514 pixels. For the first file, the mean and RMS agreed to within `1e-12` ADC on all 330,042 single-route pixels in the [nearline reference](https://portal.nersc.gov/project/dune/data/2x2/nearline_run3/panel_ped/jsons/Operations/20261116-Pedestal_LowPurity/packet-pedestal-2026_11_16_12_58_22_CST.h5.panel_ped.json). That reference lists another 389 physical pixels under two I/O routes each. The explorer pools their samples by IOG, tile, chip and channel.
+
 ## Explore a recording
 
 | Control | Behavior |
@@ -71,6 +85,7 @@ packet-explorer index --cache-dir "$SCRATCH/2x2-packet-explorer" /path/to/packet
 | **Color scale** | For numeric fields, **Full range** uses the field’s hardware range when defined, or zero to the current peak for count, rate and first-hit time. **Window range** uses the minimum and maximum across current active pixels. Held pixels stay gray. **Custom range** keeps fixed limits through playback and clips colors at either end. Each field remembers its settings while the page is open. |
 | **Histogram** | Expand the panel below **Packet rate**. **Charge packets** counts every mapped charge packet in the playhead window, with one bin per ADC, FIFO, trigger-type or flag code. **Active map pixels** counts each active pixel once using the current map field and statistic. Held-only pixels are excluded from both. Hover a bin for its exact count. **Fit axes to data** expands the occupied packet-code range in both plots. |
 | **2D histogram** | Choose X and Y in the plot beside the histogram. Color gives the number of samples in each bin. Blank cells contain zero samples. **Log color** helps reveal rare combinations, and can be switched off for a linear scale. Hover for its exact ranges and count. Both plots share the time window and area. The **Show 2D histogram** checkbox switches the extra calculation off. |
+| **2D plot settings** | Set X and Y independently to **Auto** or **Fixed**, and set a bin width on either axis. Fixed limits include both endpoints. The summary reports samples outside the axes. Choose a palette and linear or logarithmic color mapping, or fix the color limits in samples per bin. Color saturation preserves the counts shown on hover. **Lock current ranges** keeps the displayed axes, bin widths and color limits through playback. |
 | **Channel occupancy vs FIFO** | In **Charge packets**, X defaults to the number of packets from that physical channel in the window and Y to the packet’s local FIFO code. Choose **Channel ID** to group by the electronics channel number (0–63) across selected chips. In **Active map pixels**, each active pixel contributes once. To compare channel occupancy with median FIFO, set the anode map to **Local FIFO → Median** and use **Current map value** as Y. |
 | **Histogram area** | Choose the selected planes, an IOG, or one tile. For a custom area, click **Draw region**, then drag a rectangle on one IOG. It can cross tile boundaries. Its dashed outline stays attached to the selected pixels through pan, zoom and playback. Changing the clock or the global planes filter resets the area. |
 | **Theme** | Choose **Light**, **Dark** or **System** in the header. The browser remembers the preference. |

@@ -253,3 +253,92 @@ def test_http_root_selection_and_inspection(tmp_path, geom):
         srv.server_close()
         thread.join()
         work.close()
+
+
+def test_calibrated_views_and_fixed_bins(packet_file, pedestal_files, tmp_path, geom):
+    work = Workspace(tmp_path, tmp_path / "cache")
+    try:
+        key = work.open(
+            [p.name for p in pedestal_files + pedestal_files],
+            pedestal=True,
+            trigger="periodic",
+        )
+        work.worker.submit(lambda: None).result()
+        calibration = work.calibrations[key]["calibration"]
+        assert calibration.info["samples"] == 4 and calibration.info["pixels"] == 1
+        assert len(calibration.info["files"]) == 2
+        assert (
+            work.open(
+                [p.name for p in reversed(pedestal_files)],
+                pedestal=True,
+                trigger="periodic",
+            )
+            == key
+        )
+        pixel = geom.lut[1, 1, 11, 0]
+        assert calibration.mean[pixel] == 12.5
+        assert calibration.rms[pixel] == pytest.approx(np.std([11, 12, 13, 14]))
+        assert len(list((tmp_path / "cache" / "pedestals").glob("*.npy"))) == 2
+        v = Session([open_index(packet_file, work.cache, geom)], geom).views["aligned"]
+        for stat, value in [
+            ("min", -4.5),
+            ("max", 3.5),
+            ("last", 3.5),
+            ("median", -0.5),
+            ("mean", -0.5),
+        ]:
+            m = v.map(3, 1, 0, "adc_corrected", stat, calibration=calibration)
+            assert m["value"][0] == value and np.isnan(m["value"][1])
+            assert m["count"].tolist() == [2, 2]
+        opts = {"x": {"min": -4.5, "max": 3.5, "width": 0.5}, "y": {"min": 0, "max": 3}}
+        h = v.histogram(
+            3,
+            4,
+            "adc_corrected",
+            x="adc_corrected",
+            y="local_fifo",
+            settings=opts,
+            calibration=calibration,
+        )
+        assert sum(h["counts"]) == 2 and h["mean"] == -0.5 and h["missing"] == 2
+        j = h["joint"]
+        assert dict(zip(j["bins"], j["counts"])) == {15: 1, 48: 1}
+        assert j["missing"] == 2 and j["outside"] == 0
+        opts["x"]["min"] = 0
+        j = v.histogram(
+            3,
+            4,
+            "adc",
+            x="adc_corrected",
+            y="local_fifo",
+            settings=opts,
+            calibration=calibration,
+        )
+        assert sum(j["counts"]) == 4 and j["missing"] == 0
+        assert (
+            j["joint"]["counts"] == [1]
+            and j["joint"]["missing"] == 2
+            and j["joint"]["outside"] == 1
+        )
+        raw = v.packets(3, 4, None, 0, 4)["rows"]
+        calibration.annotate(raw, geom)
+        assert raw[0]["dataword"] == 8 and raw[0]["adc_corrected"] == -4.5
+        assert raw[0]["pedestal_samples"] == 4 and raw[-1]["pedestal_samples"] == 0
+        assert "adc_corrected" not in raw[-1]
+        with pytest.raises(ValueError, match="1024 bins"):
+            v.histogram(
+                3,
+                4,
+                "adc",
+                x="adc_corrected",
+                y="adc",
+                settings={"x": {"width": 1e-5}},
+                calibration=calibration,
+            )
+        bad = work.open(
+            [p.name for p in pedestal_files], pedestal=True, trigger="normal"
+        )
+        work.worker.submit(lambda: None).result()
+        assert work.calibrations[bad]["status"]["state"] == "error"
+    finally:
+        work.close()

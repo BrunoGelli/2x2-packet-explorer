@@ -44,7 +44,7 @@ def check_plane_navigation(page, expect):
 
 def check_histogram(page, expect):
     summary = page.locator("#histSummary")
-    page.locator("#histogram summary").click()
+    page.locator("#histogram > summary").click()
     expect(summary).to_have_text("4 packets · Mean 12")
     heat = page.locator("#jointPlot")
     expect(page.locator("#jointSummary")).to_have_text("4 packets")
@@ -117,7 +117,7 @@ def check_histogram(page, expect):
     expect(summary).to_have_text("0 packets in this window")
     page.get_by_role("button", name="Step backward", exact=True).click()
     expect(summary).to_have_text("2 packets · Mean 1.5")
-    page.locator("#histogram summary").click()
+    page.locator("#histogram > summary").click()
     page.locator("#hold").fill("0")
     page.locator("#hold").press("Tab")
     page.locator("#field").select_option("occupancy")
@@ -125,11 +125,81 @@ def check_histogram(page, expect):
     assert not page.locator("#inspect").evaluate("el => el.open")
 
 
+def check_calibration(page, expect, pedestal_files):
+    page.locator("#calibrate").click()
+    expect(page.locator("#pickerTitle")).to_have_text("Select pedestal files")
+    for path in pedestal_files:
+        page.get_by_label(path.name, exact=False).check()
+    page.locator("#pedTrigger").select_option("periodic")
+    page.get_by_text("Apply calibration", exact=True).click()
+    expect(page.locator("#calibrationSummary")).to_contain_text("4 samples")
+    expect(page.locator("#tick")).to_have_value("3")
+    page.locator("#field").select_option("adc_corrected")
+    page.locator("#stat").select_option("median")
+    expect(page.locator("#mapSummary")).to_contain_text("1 without pedestal")
+    expect(page.locator("#legend")).to_contain_text("-0.5 ADC")
+    page.locator("#histogram > summary").click()
+    page.locator("#histField").select_option("adc_corrected")
+    page.locator("#jointX").select_option("adc_corrected")
+    expect(page.locator("#histSummary")).to_have_text(
+        "2 packets · Mean -0.5 · 2 without pedestal"
+    )
+    expect(page.locator("#jointSummary")).to_have_text("2 packets · 2 without pedestal")
+    page.locator("#plotSettings > summary").click()
+    page.locator("#jointXMode").select_option("fixed")
+    for control, value in [
+        ("jointXMin", "-2"),
+        ("jointXMax", "4"),
+        ("jointXWidth", "0.5"),
+    ]:
+        page.locator("#" + control).fill(value)
+        page.locator("#" + control).press("Tab")
+    expect(page.locator("#jointSummary")).to_have_text(
+        "1 packet · 2 without pedestal · 1 outside axes"
+    )
+    page.locator("#jointColorMode").select_option("fixed")
+    page.locator("#jointColorMax").fill("500")
+    page.locator("#jointColorMax").press("Tab")
+    expect(page.locator("#jointPeak")).to_have_text("500")
+    page.locator("#lockJoint").click()
+    expect(page.locator("#jointYMode")).to_have_value("fixed")
+    page.locator("#jointPalette").select_option("inferno")
+    page.locator("#jointLog").uncheck()
+    expect(page.locator("#jointPeak")).to_have_text("500")
+    page.get_by_role("button", name="Step forward", exact=True).click()
+    expect(page.locator("#jointSummary")).to_have_text("0 packets")
+    expect(page.locator("#jointXWidth")).to_have_value("0.5")
+    expect(page.locator("#jointPeak")).to_have_text("500")
+    page.get_by_role("button", name="Step backward", exact=True).click()
+    page.locator("#histSamples").select_option("pixels")
+    expect(page.locator("#histSummary")).to_have_text(
+        "1 pixel · Mean -0.5 · 1 without pedestal"
+    )
+    page.locator("#histSamples").select_option("packets")
+    page.locator("#jointXMode").select_option("auto")
+    page.locator("#jointYMode").select_option("auto")
+    page.locator("#jointColorMode").select_option("auto")
+    page.locator("#jointX").select_option("channel_count")
+    page.locator("#plotSettings > summary").click()
+    page.locator("#histogram > summary").click()
+    page.locator("#inspect > summary").click()
+    expect(page.locator("#thead")).to_contain_text("ADC − pedestal")
+    page.locator("#tbody tr").first.click()
+    expect(page.locator("#rowDetail")).to_contain_text("adc_corrected = -4.5")
+    page.locator("#inspect > summary").click()
+    page.locator("#calibrationDetails > summary").click()
+    expect(page.locator("#calibrationSources li")).to_have_count(2)
+    page.locator("#removeCalibration").click()
+    expect(page.locator("#calibrationDetails")).to_be_hidden()
+    expect(page.locator("#field")).to_have_value("adc")
+    page.locator("#field").select_option("occupancy")
+
+
 @pytest.mark.skipif(
     not os.environ.get("PACKET_EXPLORER_BROWSER"),
     reason="Set PACKET_EXPLORER_BROWSER to a Chromium executable.",
 )
-def test_browser_packet_playback(packet_file, tmp_path):
+def test_browser_packet_playback(packet_file, pedestal_files, tmp_path):
     pw = pytest.importorskip("playwright.sync_api")
     work = Workspace(tmp_path, tmp_path / "cache")
     server = make_server(work, 0)
@@ -151,6 +221,7 @@ def test_browser_packet_playback(packet_file, tmp_path):
             page.get_by_role("button", name="Step forward", exact=True).click()
             pw.expect(page.locator("#tick")).to_have_value("3")
             pw.expect(page.locator("#mapSummary")).to_contain_text("4 packets")
+            check_calibration(page, pw.expect, pedestal_files)
             check_histogram(page, pw.expect)
             check_plane_navigation(page, pw.expect)
             page.get_by_label("Theme", exact=True).select_option("dark")

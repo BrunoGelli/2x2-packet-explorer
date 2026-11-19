@@ -22,6 +22,7 @@
             <option value="dark">Dark</option>
           </select></label
         >
+        <button id="calibrate">Calibration</button>
         <button id="files" class="primary">Select files</button>
       </div>
     </header>
@@ -46,6 +47,17 @@
           >
         </div>
       </section>
+      <details id="calibrationDetails" class="panel disclosure" hidden>
+        <summary>
+          Pedestal calibration <span id="calibrationSummary"></span>
+        </summary>
+        <div class="ins-content">
+          <p id="calibrationCuts"></p>
+          <ul id="calibrationSources"></ul>
+          <button id="removeCalibration">Remove calibration</button>
+        </div>
+      </details>
+      <p id="calibrationStatus" role="status" hidden></p>
       <section class="panel transport" aria-label="Playback">
         <div class="movement">
           <div class="buttons">
@@ -165,6 +177,7 @@
                 <option value="rate">Pixel rate</option>
                 <option value="first_hit">First-hit time</option>
                 <option value="adc">ADC · dataword</option>
+                <option value="adc_corrected" disabled>ADC − pedestal</option>
                 <option value="local_fifo">Local FIFO</option>
                 <option value="shared_fifo">Shared FIFO</option>
                 <option value="trigger_type">Trigger type</option>
@@ -340,9 +353,56 @@
                   ><input type="checkbox" id="jointLog" checked /> Log
                   color</label
                 >
-                <span id="jointUnit"></span><span class="joint-low">1</span
-                ><i aria-hidden="true"></i><span id="jointPeak"></span>
+                <span id="jointUnit"></span>
+                <span class="color-key"
+                  ><i aria-hidden="true"></i
+                  ><span class="color-ticks">
+                    <span id="jointLow"></span><span id="jointMid"></span
+                    ><span id="jointPeak"></span> </span
+                ></span>
               </div>
+              <details id="plotSettings">
+                <summary>Plot settings</summary>
+                <div class="plot-settings">
+                  <div id="axisControls"></div>
+                  <div class="axis-settings">
+                    <label
+                      >Color range<select id="jointColorMode">
+                        <option value="auto">Auto</option>
+                        <option value="fixed">Fixed</option>
+                      </select></label
+                    >
+                    <label
+                      >Min<input
+                        type="number"
+                        id="jointColorMin"
+                        min="1"
+                        step="1"
+                        value="1"
+                        disabled
+                    /></label>
+                    <label
+                      >Max<input
+                        type="number"
+                        id="jointColorMax"
+                        min="1"
+                        step="1"
+                        value="500"
+                        disabled
+                    /></label>
+                  </div>
+                  <div class="inline-controls">
+                    <label
+                      >Palette<select id="jointPalette">
+                        <option value="viridis">Viridis</option>
+                        <option value="inferno">Inferno</option>
+                      </select></label
+                    >
+                    <button id="lockJoint" disabled>Lock current ranges</button>
+                  </div>
+                  <span id="settingsError" role="status"></span>
+                </div>
+              </details>
             </section>
           </div>
         </div>
@@ -386,9 +446,19 @@
     <div id="tooltip" hidden></div>
     <dialog id="picker">
       <div class="dialog-head">
-        <h2>Select packet files</h2>
+        <h2 id="pickerTitle">Select packet files</h2>
         <button id="closePicker" aria-label="Close file selector">×</button>
       </div>
+      <label id="triggerLabel" hidden
+        >Pedestal samples
+        <select id="pedTrigger">
+          <option value="all">All trigger codes (nearline)</option>
+          <option value="periodic">Periodic · 3</option>
+          <option value="normal">Normal · 0</option>
+          <option value="external">External · 1</option>
+          <option value="cross">Cross · 2</option>
+        </select>
+      </label>
       <div class="browse-path">
         <button id="up">Up</button><code id="browsePath"></code>
       </div>

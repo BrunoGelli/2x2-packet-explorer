@@ -13,6 +13,7 @@ from threading import BoundedSemaphore, Lock
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+from .calibration import TRIGGERS, Calibration, file_moments
 from .geometry import Geometry
 from .index import open_index
 from .query import Session
@@ -35,6 +36,7 @@ class Workspace:
         self.lock = Lock()
         self.heavy = BoundedSemaphore(2)
         self.jobs = {}
+        self.calibrations = {}
 
     def resolve(self, path):
         target = (self.root / path).resolve()
@@ -71,7 +73,10 @@ class Workspace:
             else None,
         }
 
-    def open(self, paths):
+    def open(self, paths, *, pedestal=False, trigger="all"):
+        if pedestal and (not isinstance(trigger, str) or trigger not in TRIGGERS):
+            raise ValueError("Unknown pedestal trigger selection.")
+        jobs = self.calibrations if pedestal else self.jobs
         if (
             not isinstance(paths, list)
             or not paths
@@ -79,32 +84,42 @@ class Workspace:
         ):
             raise ValueError("Select at least one packet file.")
         paths = tuple(dict.fromkeys(self.resolve(p) for p in paths))
+        if pedestal:
+            paths = tuple(sorted(paths))
         for p in paths:
             if not p.is_file() or p.suffix.lower() not in FILE_TYPES:
                 raise ValueError(f"Expected an HDF5 packet file: {p.name}")
         stamps = tuple((p, p.stat().st_size, p.stat().st_mtime_ns) for p in paths)
         with self.lock:
-            for key, job in self.jobs.items():
-                if job["stamps"] == stamps and job["status"]["state"] != "error":
+            for key, job in jobs.items():
+                if (
+                    job["stamps"] == stamps
+                    and job["trigger"] == trigger
+                    and job["status"]["state"] != "error"
+                ):
                     return key
-            if len(self.jobs) >= 8:
+            if len(jobs) >= 8:
                 old = next(
                     (
                         k
-                        for k, v in self.jobs.items()
+                        for k, v in jobs.items()
                         if v["status"]["state"] in ("ready", "error")
                     ),
                     None,
                 )
                 if old is None:
                     raise ValueError("The reader is busy indexing previous selections.")
-                del self.jobs[old]
+                del jobs[old]
             key = uuid4().hex
-            job = self.jobs[key] = {"stamps": stamps, "status": {"state": "queued"}}
-            self.worker.submit(self._load, job, paths)
+            job = jobs[key] = {
+                "stamps": stamps,
+                "trigger": trigger,
+                "status": {"state": "queued"},
+            }
+            self.worker.submit(self._load, job, paths, pedestal)
         return key
 
-    def _load(self, job, paths):
+    def _load(self, job, paths, pedestal):
         def update(**status):
             with self.lock:
                 job["status"] = status
@@ -114,6 +129,7 @@ class Workspace:
 
         try:
             files = []
+            moments = None
             for i, p in enumerate(paths):
                 context = {
                     "state": "indexing",
@@ -123,10 +139,29 @@ class Workspace:
                 }
                 progress = partial(update_progress, context)
                 progress(0, 0)
-                files.append(open_index(p, self.cache, self.geometry, progress))
-            session = Session(files, self.geometry)
+                if pedestal:
+                    part = file_moments(
+                        p, self.cache, self.geometry, job["trigger"], progress
+                    )
+                    if moments is None:
+                        moments = part
+                    else:
+                        moments += part
+                else:
+                    files.append(open_index(p, self.cache, self.geometry, progress))
+            if pedestal:
+                result = Calibration(moments, paths, job["trigger"], self.geometry)
+                ready = {
+                    "calibration": result,
+                    "status": {"state": "ready", **result.info},
+                }
+            else:
+                ready = {
+                    "session": Session(files, self.geometry),
+                    "status": {"state": "ready"},
+                }
             with self.lock:
-                job.update(status={"state": "ready"}, session=session)
+                job.update(ready)
         except Exception as exc:
             LOG.exception("Opening packet selection")
             update(state="error", error=str(exc))
@@ -196,7 +231,7 @@ class Handler(BaseHTTPRequestHandler):
                 )
             if post:
                 if (
-                    path != "api/open"
+                    path not in ("api/open", "api/calibrate")
                     or self.headers.get_content_type() != "application/json"
                 ):
                     return self.send(
@@ -208,7 +243,17 @@ class Handler(BaseHTTPRequestHandler):
                 payload = json.loads(self.rfile.read(length))
                 if not isinstance(payload, dict):
                     raise ValueError("Invalid selection.")
-                return self.send({"job": self.work.open(payload.get("files"))})
+                return self.send(
+                    {
+                        "job": self.work.open(
+                            payload.get("files"),
+                            pedestal=path == "api/calibrate",
+                            trigger=payload.get("trigger", "all")
+                            if path == "api/calibrate"
+                            else "all",
+                        )
+                    }
+                )
             if path == "api/bootstrap":
                 return self.send(
                     {
@@ -249,9 +294,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def query(self, action, q):
         with self.work.lock:
+            cal_job = self.work.calibrations.get(q.get("calibration"))
+            cal_status = cal_job["status"] if cal_job else None
+            calibration = cal_job.get("calibration") if cal_job else None
             job = self.work.jobs.get(q.get("job"))
             status = job["status"] if job else None
             session = job.get("session") if job else None
+        if action == "calibration-status":
+            if cal_status is None:
+                raise ValueError("Calibration expired. Reselect the pedestal files.")
+            return self.send(cal_status)
+        if (
+            q.get("calibration")
+            and action in ("map", "histogram", "rows", "packets")
+            and calibration is None
+        ):
+            raise ValueError("Calibration is unavailable. Reselect the pedestal files.")
         if status is None:
             return self.send(
                 {"error": "Session expired. Reopen the files."}, status=404
@@ -274,14 +332,10 @@ class Handler(BaseHTTPRequestHandler):
             index = session.files[file]
             start = number("start", 0, 0, index.meta["rows"])
             limit = number("limit", 40, 1, 200)
-            return self.send(
-                {
-                    "total": index.meta["rows"],
-                    "rows": index.rows(
-                        range(start, min(start + limit, index.meta["rows"]))
-                    ),
-                }
-            )
+            rows = index.rows(range(start, min(start + limit, index.meta["rows"])))
+            if calibration:
+                calibration.annotate(rows, self.work.geometry)
+            return self.send({"total": index.meta["rows"], "rows": rows})
         view = session.views[q.get("scope", "aligned")]
         if action == "view":
             return self.send(view.info())
@@ -302,6 +356,7 @@ class Handler(BaseHTTPRequestHandler):
                     q.get("field", "occupancy"),
                     q.get("stat", "last"),
                     iog,
+                    calibration,
                 )
                 return self.send(records.tobytes(), "application/octet-stream")
             lo = number("lo", 0, 0, view.length - 1)
@@ -317,6 +372,8 @@ class Handler(BaseHTTPRequestHandler):
                         boxes,
                         q.get("x"),
                         q.get("y"),
+                        calibration,
+                        json.loads(q.get("settings", "{}")),
                     )
                 )
             if action == "timeline":
@@ -327,16 +384,17 @@ class Handler(BaseHTTPRequestHandler):
                 )
             if action == "packets":
                 pixel = number("pixel", -1, -1, self.work.geometry.size - 1)
-                return self.send(
-                    view.packets(
-                        lo,
-                        hi,
-                        None if pixel < 0 else pixel,
-                        number("skip", 0, 0, 2**53 - 1),
-                        number("limit", 40, 1, 200),
-                        iog,
-                    )
+                result = view.packets(
+                    lo,
+                    hi,
+                    None if pixel < 0 else pixel,
+                    number("skip", 0, 0, 2**53 - 1),
+                    number("limit", 40, 1, 200),
+                    iog,
                 )
+                if calibration:
+                    calibration.annotate(result["rows"], self.work.geometry)
+                return self.send(result)
         return self.send({"error": "Unknown query."}, status=404)
 
     def log_message(self, fmt, *args):

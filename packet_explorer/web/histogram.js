@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 const fmt = (n) => n.toLocaleString(undefined, { maximumSignificantDigits: 6 });
 const fieldNames = {
   adc: "ADC dataword",
+  adc_corrected: "ADC − pedestal",
   local_fifo: "Local FIFO",
   shared_fifo: "Shared FIFO",
   trigger_type: "Trigger type",
@@ -14,9 +15,10 @@ const fieldNames = {
 const left = 58,
   right = 16;
 
-function pixelHistogram(detector, region, axes) {
+function pixelHistogram(detector, region, axes, settings) {
   const ids = axes ? [] : null;
-  let maxCount = 0;
+  let maxCount = 1,
+    missing = 0;
   const values = [];
   const boxes = new Map((region.boxes || []).map((box) => [box[0], box]));
   let min = Infinity,
@@ -35,22 +37,31 @@ function pixelHistogram(detector, region, axes) {
         y = Math.floor(cell / tile.width);
       if (x < box[1] || y < box[2] || x >= box[3] || y >= box[4]) continue;
     }
+    if (ids) {
+      ids.push(id);
+      maxCount = Math.max(maxCount, detector.count[id]);
+    }
     const v = detector.value[id];
+    if (!Number.isFinite(v)) {
+      missing++;
+      continue;
+    }
     min = Math.min(min, v);
     max = Math.max(max, v);
     sum += v;
     integers &&= Number.isInteger(v);
     values.push(v);
-    if (ids) {
-      ids.push(id);
-      maxCount = Math.max(maxCount, detector.count[id]);
-    }
   }
-  if (!values.length) return { counts: [], total: 0 };
-  // Use exact codes when possible. Continuous bins include the maximum in the last bin.
-  const discrete = min === max || (integers && max - min < 256);
-  const n = discrete ? max - min + 1 : 64;
-  const width = discrete ? 1 : (max - min) / n;
+  // Signed calibrated values keep continuous bins even when a window has only one value.
+  const discrete =
+    detector.field !== "adc_corrected" &&
+    (min === max || (integers && max - min < 256));
+  if (!values.length) {
+    min = 0;
+    max = 0;
+  }
+  const n = discrete ? max - min + 1 : min === max ? 1 : 64;
+  const width = discrete || max === min ? 1 : (max - min) / n;
   const counts = Array(n).fill(0);
   for (const v of values)
     counts[Math.min(n - 1, Math.floor((v - min) / width))]++;
@@ -59,10 +70,12 @@ function pixelHistogram(detector, region, axes) {
     min,
     width,
     discrete,
+    missing,
     total: values.length,
-    mean: sum / values.length,
+    mean: values.length ? sum / values.length : 0,
   };
-  if (axes) data.joint = pixelPairs(detector, ids, maxCount, data, axes);
+  if (axes)
+    data.joint = pixelPairs(detector, ids, maxCount, data, axes, settings);
   return data;
 }
 
@@ -75,7 +88,7 @@ function binLabel(data, i) {
     fmt(low) +
     ", " +
     fmt(high) +
-    (i === data.counts.length - 1 ? "]" : ")")
+    (i === data.counts.length - 1 && data.closedLast !== false ? "]" : ")")
   );
 }
 
@@ -89,6 +102,7 @@ export class Histogram {
     this.heatmap = new Heatmap(fieldNames, () => this.refresh());
     for (const [value, label] of Object.entries(fieldNames))
       $("histField").add(new Option(label, value));
+    this.setCalibrated(false);
     this.panel.addEventListener("toggle", () => {
       this.setDrawing(false);
       this.refresh();
@@ -139,6 +153,20 @@ export class Histogram {
     this.observer.observe(this.canvas);
     this.observer.observe(this.heatmap.canvas);
     this.reset(0);
+  }
+  setCalibrated(enabled) {
+    $("histField").querySelector('[value="adc_corrected"]').disabled = !enabled;
+    if (!enabled && $("histField").value === "adc_corrected")
+      $("histField").value = "adc";
+    const heat = this.heatmap;
+    heat.calibrated = enabled;
+    if (!enabled)
+      heat.choices.packets = heat.choices.packets.map((k) =>
+        k === "adc_corrected" ? "adc" : k,
+      );
+    const mode = heat.mode;
+    heat.mode = null;
+    heat.setMode(mode, heat.mapKey);
   }
   reset(iog) {
     this.frame = null;
@@ -212,7 +240,10 @@ export class Histogram {
   async refresh() {
     this.pending?.abort();
     const pixels = $("histSamples").value === "pixels";
-    this.heatmap.setMode($("histSamples").value);
+    this.heatmap.setMode(
+      $("histSamples").value,
+      this.detector.field + "/" + this.detector.stat,
+    );
     const axes = this.heatmap.axes;
     this.heatmap.set(null, null, pixels ? "pixels" : "packets", "Map value");
     $("histFieldLabel").hidden = $("histFitLabel").hidden = pixels;
@@ -244,18 +275,29 @@ export class Histogram {
       : fieldNames[field];
     this.unit = pixels ? "pixels" : "packets";
     $("histTitle").textContent = this.label;
-    if (pixels) {
-      this.data = pixelHistogram(this.detector, region, axes);
-    } else {
+    let settings;
+    $("settingsError").textContent = "";
+    try {
+      settings = axes ? this.heatmap.settings() : undefined;
+      if (pixels)
+        this.data = pixelHistogram(this.detector, region, axes, settings);
+    } catch (e) {
+      $("settingsError").textContent = e.message;
+      $("histSummary").textContent = "";
+      this.draw();
+      return;
+    }
+    if (!pixels) {
       const ctrl = new AbortController();
       this.pending = ctrl;
       $("histSummary").textContent = "Counting packets…";
       this.draw();
       try {
-        const { counts, joint } = await this.fetchBins(
+        const { counts, joint, axis, mean, missing } = await this.fetchBins(
           {
             ...this.frame,
             ...axes,
+            settings: settings && JSON.stringify(settings),
             iog: region.iog,
             field,
             boxes: region.boxes && JSON.stringify(region.boxes),
@@ -269,10 +311,9 @@ export class Histogram {
           joint,
           counts,
           total,
-          mean: total ? sum / total : 0,
-          min: 0,
-          width: 1,
-          discrete: true,
+          mean: mean ?? (total ? sum / total : 0),
+          missing,
+          ...axis,
         };
       } catch (e) {
         if (!ctrl.signal.aborted) $("histSummary").textContent = e.message;
@@ -288,6 +329,9 @@ export class Histogram {
         " · Mean " +
         fmt(data.mean)
       : "0 " + this.unit + " in this window";
+    if (data.missing)
+      $("histSummary").textContent +=
+        " · " + fmt(data.missing) + " without pedestal";
     this.draw();
   }
   draw() {
@@ -301,7 +345,12 @@ export class Histogram {
         end = data.counts.length;
       while (end > start + 1 && !data.counts[end - 1]) end--;
       start = Math.max(0, start - 1);
-      data = { ...data, min: start, counts: data.counts.slice(start, end + 1) };
+      data = {
+        ...data,
+        min: data.min + start * data.width,
+        closedLast: end + 1 >= data.counts.length,
+        counts: data.counts.slice(start, end + 1),
+      };
     }
     this.displayBins = data;
     if (!data?.total) return;

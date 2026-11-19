@@ -22,13 +22,19 @@ const format = (n) =>
   n.toLocaleString(undefined, { maximumSignificantDigits: 6 });
 const fixedMax = {
   adc: 255,
+  adc_corrected: 255,
   local_fifo: 3,
   shared_fifo: 3,
   trigger_type: 3,
   first_packet: 1,
   downstream_marker: 1,
 };
-const units = { first_hit: " ticks", rate: " Hz", adc: " ADC" };
+const units = {
+  first_hit: " ticks",
+  rate: " Hz",
+  adc: " ADC",
+  adc_corrected: " ADC",
+};
 const resetCamera = () => ({ zoom: 1, x: 0, y: 0 });
 
 export function showTip(e, text) {
@@ -371,7 +377,8 @@ export class Detector {
             "  |  " +
             format(this.count[id]) +
             (this.count[id] === 1 ? " packet" : " packets");
-          if (!["occupancy", "count"].includes(this.field))
+          if (!Number.isFinite(this.value[id])) text += " · No pedestal";
+          else if (!["occupancy", "count"].includes(this.field))
             text += " · " + format(this.value[id]) + (units[this.field] || "");
         }
       }
@@ -444,6 +451,7 @@ export class Detector {
     this.ids = new Uint32Array(n);
     let nPacket = 0,
       nCurrent = 0,
+      missing = 0,
       peak = -Infinity,
       low = Infinity;
     for (let i = 0; i < n; i++) {
@@ -458,6 +466,10 @@ export class Detector {
       if (c) {
         nPacket += c;
         nCurrent++;
+        if (!Number.isFinite(v)) {
+          missing++;
+          continue;
+        }
         peak = Math.max(peak, v);
         low = Math.min(low, v);
       }
@@ -466,12 +478,13 @@ export class Detector {
     this.field = field;
     this.stat = stat;
     this.showHeld = heldTicks > width;
-    this.extent = nCurrent ? [low, peak] : null;
+    this.extent = nCurrent > missing ? [low, peak] : null;
     $("mapSummary").textContent =
       nPacket.toLocaleString() +
       " packets · " +
       nCurrent.toLocaleString() +
       " active pixels" +
+      (missing ? " · " + format(missing) + " without pedestal" : "") +
       (heldTicks > width
         ? " · " + (n - nCurrent).toLocaleString() + " held"
         : "");
@@ -484,7 +497,10 @@ export class Detector {
   scaleState() {
     const key = this.scaleKey();
     if (!this.scaleByField.has(key))
-      this.scaleByField.set(key, { mode: "full", range: null });
+      this.scaleByField.set(key, {
+        mode: this.field === "adc_corrected" ? "window" : "full",
+        range: null,
+      });
     return this.scaleByField.get(key);
   }
   syncScaleControls() {
@@ -503,7 +519,7 @@ export class Detector {
     if (mode === "custom" && range) return range;
     if (mode === "window" && this.extent) return this.extent;
     return [
-      0,
+      this.field === "adc_corrected" ? -255 : 0,
       this.stat === "full_fraction"
         ? 1
         : (fixedMax[this.field] ?? this.extent?.[1] ?? 1),
@@ -518,6 +534,11 @@ export class Detector {
     for (const id of this.ids) {
       const t = this.tiles[this.tileOf[id]],
         k = (id - t.start) * 4;
+      if (this.count[id] && !Number.isFinite(this.value[id])) {
+        t.image.data[k + 3] = 0;
+        t.dirty = true;
+        continue;
+      }
       const rgb = !this.count[id]
         ? held
         : field === "occupancy"
