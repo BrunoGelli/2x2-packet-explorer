@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 
 PERIOD = 10_000_000
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 CHUNK_ROWS = 131_072
 HIT = np.dtype(
     [
@@ -45,6 +45,33 @@ REQUIRED = {
 
 
 @dataclass
+class ReceiptBand:
+    """Bounds on header origins and sampled PPS intervals, independent of hit rate."""
+
+    low: int | None = None
+    high: int | None = None
+    first: int | None = None
+    last: int | None = None
+
+    def observe(self, seconds, intervals):
+        if not len(seconds):
+            return
+        origins = seconds - intervals
+        lo, hi = int(origins.min()), int(origins.max())
+        first, last = int(intervals.min()), int(intervals.max())
+        self.low = lo if self.low is None else min(self.low, lo)
+        self.high = hi if self.high is None else max(self.high, hi)
+        self.first = first if self.first is None else min(self.first, first)
+        self.last = last if self.last is None else max(self.last, last)
+
+    @property
+    def stable_origin(self):
+        if self.first != self.last and self.low == self.high:
+            return self.low
+        return None
+
+
+@dataclass
 class Clock:
     offset: int = 0
     last_step: int = PERIOD
@@ -52,6 +79,44 @@ class Clock:
     ready: bool = False
     votes: Counter = field(default_factory=Counter)
     counts: Counter = field(default_factory=Counter)
+
+    early: ReceiptBand = field(default_factory=ReceiptBand)
+    late: ReceiptBand = field(default_factory=ReceiptBand)
+
+    # An HDF5 chunk can end partway through a PACMAN message.
+    pending_min: int = np.iinfo(np.int64).max
+    pending_max: int = -1
+
+    def observe_envelopes(self, seconds, lows, highs):
+        # A header labels message assembly. A delayed, buffered message can
+        # contain a whole second of data. Use it only when its receipt range
+        # fits entirely inside one of the two interior phase bands.
+        valid = (seconds > 0) & (highs >= lows)
+        intervals, phases = np.divmod(lows[valid], PERIOD)
+        last = highs[valid] - intervals * PERIOD
+        for band, start in ((self.early, 2), (self.late, 7)):
+            inside = (phases >= start * PERIOD // 10) & (
+                last < (start + 1) * PERIOD // 10
+            )
+            band.observe(seconds[valid][inside], intervals[inside])
+
+    def observe_receipts(self, headers, labels, positions, ticks, sync, reset_ticks):
+        lows = np.full(len(labels), np.iinfo(np.int64).max, dtype=np.int64)
+        highs = np.full(len(labels), -1, dtype=np.int64)
+        lows[0], highs[0] = self.pending_min, self.pending_max
+        for indices, times in ((positions, ticks), (sync, reset_ticks)):
+            envelopes = np.searchsorted(headers, indices)
+            np.minimum.at(lows, envelopes, times)
+            np.maximum.at(highs, envelopes, times)
+        self.observe_envelopes(labels[:-1], lows[:-1], highs[:-1])
+        self.pending_min, self.pending_max = int(lows[-1]), int(highs[-1])
+
+    def finish(self):
+        self.observe_envelopes(
+            np.array([self.label]),
+            np.array([self.pending_min]),
+            np.array([self.pending_max]),
+        )
 
     def decode(self, iog, rows, row_ids, geometry):
         kind, subtype = rows["packet_type"], rows["trigger_type"]
@@ -94,6 +159,17 @@ class Clock:
             else np.zeros(len(d), bool)
         )
         normal = (d["valid_parity"] != 0) & ~diag
+        # The receipt clock measures PACMAN arrival. ASIC hit time can belong
+        # to an earlier interval due to FIFO delay.
+        usable = normal & ready & (receipt < PERIOD)
+        self.observe_receipts(
+            headers,
+            labels,
+            data_i[usable],
+            offsets[epoch[usable]] + receipt[usable],
+            sync,
+            offsets[1:],
+        )
         pixel = geometry.lookup(iog, d)
         selected = normal & ready & timing_ok & (pixel >= 0)
         self.counts.update(
@@ -147,14 +223,53 @@ class Clock:
             )
         return hits, markers
 
-    def summary(self):
-        qualified = (
-            len(self.votes) == 1
-            and sum(self.votes.values()) >= 2
+    def interior_epoch(self):
+        epoch = self.early.stable_origin
+        if (
+            epoch is not None
+            and epoch == self.late.stable_origin
             and not self.counts["invalid_sync"]
-        )
-        epoch = next(iter(self.votes)) if qualified else None
-        return {"counts": dict(self.counts), "epoch": epoch, "votes": dict(self.votes)}
+            and self.votes
+            and all(origin in (epoch - 1, epoch) for origin in self.votes)
+        ):
+            return epoch
+        return None
+
+    def summary(self, use_interior=False):
+        epoch = self.interior_epoch()
+        if epoch is not None:
+            method = "receipt"
+        elif use_interior:
+            method = "local"
+        else:
+            # Legacy/free-running data: UNIX rollover may occur between bands.
+            # An ordinary interval can contain the reset's label and its successor.
+            # If receipts contradict that ordering, leave the stream local.
+            method = "local"
+            if (
+                len(self.votes) == 1
+                and sum(self.votes.values()) >= 2
+                and not self.counts["invalid_sync"]
+            ):
+                edge = next(iter(self.votes))
+                bands = (self.early, self.late)
+                plausible = all(
+                    b.low is None or (edge <= b.low <= b.high <= edge + 1)
+                    for b in bands
+                )
+                if plausible and (
+                    self.early.high is None
+                    or self.late.low is None
+                    or self.early.high <= self.late.low
+                ):
+                    epoch, method = edge, "reset"
+        return {
+            "counts": dict(self.counts),
+            "epoch": epoch,
+            "method": method,
+            "votes": dict(self.votes),
+            "receipt_bands": {"early": vars(self.early), "late": vars(self.late)},
+        }
 
 
 def signature(path):
@@ -232,13 +347,16 @@ def build_index(path, directory, geometry, sig, progress, chunk):
         raise ValueError(
             "The input changed while indexing. Select a closed packet file."
         )
+    for clock in clocks.values():
+        clock.finish()
+    use_interior = any(c.interior_epoch() is not None for c in clocks.values())
     metadata = dict(
         signature=sig,
         rows=size,
         fields=fields,
         config=config_name,
         types=dict(totals),
-        clocks={g: c.summary() for g, c in clocks.items()},
+        clocks={g: c.summary(use_interior) for g, c in clocks.items()},
         **blocks,
     )
     (directory / "index.json").write_text(json.dumps(metadata, separators=(",", ":")))
