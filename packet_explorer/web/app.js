@@ -377,7 +377,11 @@ function displayFiles() {
       const tr = node("tr", "");
       for (const v of [
         g,
-        clock.epoch === null ? "Local / unqualified" : "PPS-labelled",
+        {
+          receipt: "PPS + interior receipts",
+          reset: "Reset headers only (provisional)",
+          local: "Local / unqualified",
+        }[clock.method],
         c.resets,
         c.mapped,
         c.before_sync,
